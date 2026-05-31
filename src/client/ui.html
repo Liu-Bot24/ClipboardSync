@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clipboard Sync</title>
+    <link rel="stylesheet" href="./ui.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <div class="title">共享剪贴板</div>
+          <div id="status" class="status">连接中</div>
+        </div>
+        <div class="top-actions">
+          <button id="historyButton" class="icon-button" title="历史" aria-label="历史" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2"/></svg>
+          </button>
+          <button id="refresh" class="icon-button" title="刷新" aria-label="刷新">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 7v5h-5" />
+              <path d="M4 17v-5h5" />
+              <path d="M18.6 9A7 7 0 0 0 6 7.1" />
+              <path d="M5.4 15A7 7 0 0 0 18 16.9" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="controls">
+        <label><input id="pauseSend" type="checkbox" /> 暂停发送</label>
+        <label><input id="pauseReceive" type="checkbox" /> 暂停接收</label>
+        <label><input id="autoLaunch" type="checkbox" /> 开机启动</label>
+      </section>
+
+      <details class="connection">
+        <summary>连接</summary>
+        <div class="connection-grid">
+          <label>服务器 <input id="hubUrl" type="text" /></label>
+          <label>令牌（可选） <input id="token" type="password" /></label>
+          <button id="saveConnection">保存</button>
+        </div>
+      </details>
+
+      <details class="ignore-rules">
+        <summary>忽略</summary>
+        <div class="ignore-grid">
+          <label class="wide-option"><input id="ignoreUnknownSource" type="checkbox" /> 忽略未知复制来源</label>
+          <div class="recent-source-group">
+            <div class="field-label">最近复制来源</div>
+            <div id="recentSources" class="recent-sources"></div>
+          </div>
+          <label>规则 <textarea id="ignoredSourcePatterns" rows="3" spellcheck="false" placeholder="可手动填写，一行一个"></textarea></label>
+          <button id="saveIgnore">保存</button>
+        </div>
+      </details>
+
+      <section class="panel">
+        <table>
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>发送</th>
+              <th>接收</th>
+            </tr>
+          </thead>
+          <tbody id="devices"></tbody>
+        </table>
+      </section>
+
+      <footer>
+        <button id="quit">退出</button>
+      </footer>
+    </main>
+    <script src="./ui-renderer.js"></script>
+  </body>
+</html>

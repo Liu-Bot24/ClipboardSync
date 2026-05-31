@@ -1,0 +1,36 @@
+{
+  "name": "clipboard-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted shared clipboard hub for Mac and Windows clients.",
+  "main": "src/client/electron-main.js",
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "client": "electron .",
+    "icons": "swift scripts/make-icons.swift && iconutil -c icns assets/ClipboardSync.iconset -o assets/ClipboardSync.icns && node scripts/png-to-ico.mjs assets/app-icon.png assets/ClipboardSync.ico",
+    "qa:screenshot": "node scripts/capture-ui.mjs",
+    "qa:screenshot:fixture": "node scripts/capture-ui.mjs --fixture",
+    "verify:ui": "node scripts/verify-ui.mjs",
+    "package:mac": "electron-packager . ClipboardSync --platform=darwin --arch=universal --osx-universal.mergeASARs=true --out=dist --overwrite --icon=assets/ClipboardSync.icns --app-bundle-id=dev.liuqi.clipboardsync --app-category-type=public.app-category.utilities --ignore='^/(assets|data|dist|tests|docs|scripts|tmp|\\.local|\\.git|AGENTS.md|DEVELOPMENT_LOG.md|Dockerfile|docker-compose.yml|\\.dockerignore|\\.env.*|\\.client-bootstrap\\.json|clipboard-sync\\.config\\.json)($|/)' --ignore='^/src/(config|event-store|event-validation|index|server)\\.js$'",
+    "package:win": "electron-packager . ClipboardSync --platform=win32 --arch=x64 --out=dist --overwrite --icon=assets/ClipboardSync.ico --executable-name=ClipboardSync --ignore='^/(assets|data|dist|tests|docs|scripts|tmp|\\.local|\\.git|AGENTS.md|DEVELOPMENT_LOG.md|Dockerfile|docker-compose.yml|\\.dockerignore|\\.env.*|\\.client-bootstrap\\.json|clipboard-sync\\.config\\.json)($|/)' --ignore='^/src/(config|event-store|event-validation|index|server)\\.js$'",
+    "package:release": "npm run clean && npm run icons && npm run package:mac && npm run package:win && node scripts/fix-mac-plist.mjs && node scripts/write-public-client-config.mjs && node scripts/write-mac-local-proxy.mjs && node scripts/write-mac-paste-helper.mjs && node scripts/sign-mac-app.mjs && node scripts/create-mac-dmg.mjs && cd dist && zip -qr -X ClipboardSync-windows-x64.zip ClipboardSync-win32-x64 && node ../scripts/verify-public-package-artifacts.mjs && node ../scripts/write-release-manifest.mjs && node ../scripts/verify-release-manifest.mjs && node ../scripts/clean-package-build-dirs.mjs",
+    "package:configured": "npm run clean && npm run icons && npm run package:mac && npm run package:win && node scripts/fix-mac-plist.mjs && node scripts/inject-client-config.mjs && node scripts/write-mac-local-proxy.mjs && node scripts/write-mac-paste-helper.mjs && node scripts/sign-mac-app.mjs && node scripts/create-mac-dmg.mjs && cd dist && zip -qr -X ClipboardSync-windows-x64.zip ClipboardSync-win32-x64 && node ../scripts/verify-package-artifacts.mjs && node ../scripts/write-release-manifest.mjs && node ../scripts/verify-release-manifest.mjs && node ../scripts/clean-package-build-dirs.mjs",
+    "verify:package": "node scripts/verify-package-artifacts.mjs && node scripts/verify-release-manifest.mjs",
+    "verify:release": "node scripts/verify-public-package-artifacts.mjs && node scripts/verify-release-manifest.mjs",
+    "smoke:mac-package": "node scripts/smoke-mac-package.mjs",
+    "smoke:windows-package": "powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File scripts\\smoke-windows-package.ps1",
+    "test": "node --test tests/*.test.js",
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.0.0",
+    "electron": "^42.3.0"
+  }
+}

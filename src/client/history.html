@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clipboard Sync</title>
+    <link rel="stylesheet" href="./ui.css" />
+  </head>
+  <body>
+    <main class="shell history-shell">
+      <header class="topbar">
+        <div>
+          <div class="title">主窗口</div>
+          <div id="historyStatus" class="status">历史 · 最近 30 条</div>
+        </div>
+        <div class="top-actions">
+          <label class="pin-control"><input id="historyAlwaysOnTop" type="checkbox" /> 总在最前</label>
+          <button id="clearHistory" class="text-button danger-button" title="清除全局历史" aria-label="清除全局历史">
+            清除全局历史
+          </button>
+          <button id="refreshHistory" class="icon-button" title="刷新" aria-label="刷新">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 7v5h-5" />
+              <path d="M4 17v-5h5" />
+              <path d="M18.6 9A7 7 0 0 0 6 7.1" />
+              <path d="M5.4 15A7 7 0 0 0 18 16.9" />
+            </svg>
+          </button>
+        </div>
+      </header>
+      <section id="history" class="history-list"></section>
+    </main>
+    <script src="./history-renderer.js"></script>
+  </body>
+</html>

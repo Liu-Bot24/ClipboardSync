@@ -1,0 +1,17 @@
+node_modules/
+dist/
+data/
+coverage/
+docs/
+.local/
+.git/
+.env
+.env.*
+!.env.example
+DEVELOPMENT_LOG.md
+npm-debug.log*
+clipboard-sync.config.json
+.client-bootstrap.json
+.DS_Store
+tmp/
+assets/ClipboardSync.iconset/
