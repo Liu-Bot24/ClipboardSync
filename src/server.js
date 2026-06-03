@@ -108,12 +108,14 @@ export async function createClipboardHubServer(config) {
     maxHistoryEntries: 100,
     historyDisplayLimit: 30,
     maxPayloadBytes: 33_554_432,
+    duplicateContentWindowMs: 30_000,
     ...config
   };
   const store = new EventStore(config.historyPath, {
     maxHistoryEntries: config.maxHistoryEntries,
     maxHistoryBytes: config.maxHistoryBytes,
-    maxHistoryAgeMs: config.maxHistoryAgeMs
+    maxHistoryAgeMs: config.maxHistoryAgeMs,
+    duplicateContentWindowMs: config.duplicateContentWindowMs
   });
   const clients = new Map();
   const clientsByDeviceId = new Map();

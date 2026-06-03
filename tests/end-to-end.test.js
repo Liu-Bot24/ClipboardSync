@@ -246,6 +246,45 @@ test('send and receive rules are enforced across a three-device shared clipboard
   });
 });
 
+test('Hub suppresses same-content cross-device echoes from OS clipboard sync', async () => {
+  await withServer(async (hubUrl) => {
+    const [pc, macbook, idleMac] = await createPeers(hubUrl, ['main-pc', 'macbook', 'idle-mac']);
+    try {
+      pc.settings.deviceRules = {
+        macbook: { send: true, receive: true },
+        'idle-mac': { send: false, receive: true }
+      };
+
+      pc.clipboard.setText('copied once through the shared clipboard');
+      pc.service.pollLocalClipboard();
+
+      await waitFor(
+        () => macbook.clipboard.snapshot?.content === 'copied once through the shared clipboard',
+        'MacBook to receive targeted text'
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(idleMac.clipboard.snapshot, null);
+
+      idleMac.clipboard.setText('copied once through the shared clipboard');
+      idleMac.service.pollLocalClipboard();
+
+      await waitFor(
+        () => idleMac.events.some((event) => event.content === 'copied once through the shared clipboard'),
+        'idle Mac to receive duplicate acknowledgement'
+      );
+      const history = await pc.hub.fetchHistory(10);
+      assert.deepEqual(
+        history.map((event) => [event.sourceDeviceId, event.content]),
+        [['main-pc', 'copied once through the shared clipboard']]
+      );
+    } finally {
+      pc.stop();
+      macbook.stop();
+      idleMac.stop();
+    }
+  });
+});
+
 test('offline allowed targets can read targeted history after they reconnect', async () => {
   await withServer(async (hubUrl) => {
     const [pc, macMini] = await createPeers(hubUrl, ['main-pc', 'mac-mini']);

@@ -9,6 +9,17 @@ function parsePositiveInteger(value, name) {
   return number;
 }
 
+function parseNonNegativeInteger(value, name) {
+  if (!/^(?:0|[1-9]\d*)$/.test(String(value || ''))) {
+    throw new Error(`${name} must be a non-negative integer`);
+  }
+  const number = Number(value);
+  if (!Number.isSafeInteger(number)) {
+    throw new Error(`${name} must be a safe integer`);
+  }
+  return number;
+}
+
 export function readConfig(env = process.env) {
   const token = String(env.CLIPBOARD_HUB_TOKEN || '').trim();
   if (
@@ -49,6 +60,9 @@ export function readConfig(env = process.env) {
     maxHistoryAgeMs: env.CLIPBOARD_HUB_MAX_HISTORY_AGE_MS
       ? parsePositiveInteger(env.CLIPBOARD_HUB_MAX_HISTORY_AGE_MS, 'CLIPBOARD_HUB_MAX_HISTORY_AGE_MS')
       : 604_800_000,
+    duplicateContentWindowMs: env.CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS !== undefined
+      ? parseNonNegativeInteger(env.CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS, 'CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS')
+      : 30_000,
     token
   };
 }

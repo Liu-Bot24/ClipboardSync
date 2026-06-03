@@ -39,12 +39,42 @@ function isAdjacentDuplicate(previous, event) {
   );
 }
 
+function samePayload(left, right) {
+  return (
+    left.contentType === right.contentType &&
+    left.encoding === right.encoding &&
+    left.sha256 === right.sha256 &&
+    left.content === right.content
+  );
+}
+
+function isRecentCrossDeviceEcho(events, event, nowMs, windowMs) {
+  if (!Number.isFinite(windowMs) || windowMs <= 0) {
+    return false;
+  }
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const previous = events[index];
+    const previousMs = Date.parse(previous.createdAt);
+    if (Number.isNaN(previousMs)) {
+      continue;
+    }
+    if (nowMs - previousMs > windowMs) {
+      return false;
+    }
+    if (previous.sourceDeviceId !== event.sourceDeviceId && samePayload(previous, event)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export class EventStore {
   constructor(historyPath, options = {}) {
     this.historyPath = historyPath;
     this.maxHistoryEntries = options.maxHistoryEntries ?? 200;
     this.maxHistoryBytes = options.maxHistoryBytes ?? Number.POSITIVE_INFINITY;
     this.maxHistoryAgeMs = options.maxHistoryAgeMs ?? Number.POSITIVE_INFINITY;
+    this.duplicateContentWindowMs = options.duplicateContentWindowMs ?? 30_000;
     this.maxBrokenBackups = options.maxBrokenBackups ?? 3;
     this.now = options.now ?? (() => new Date());
     this.events = [];
@@ -136,12 +166,16 @@ export class EventStore {
     if (isAdjacentDuplicate(this.events.at(-1), event)) {
       return null;
     }
+    const now = this.now();
+    if (isRecentCrossDeviceEcho(this.events, event, now.getTime(), this.duplicateContentWindowMs)) {
+      return null;
+    }
 
     const stored = {
       ...event,
       id: randomUUID(),
       sequence: this.nextSequenceNumber,
-      createdAt: this.now().toISOString()
+      createdAt: now.toISOString()
     };
     this.nextSequenceNumber += 1;
 

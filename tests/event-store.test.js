@@ -71,6 +71,34 @@ test('EventStore stores the same payload again after another clipboard event int
   });
 });
 
+test('EventStore skips recent cross-device echoes with the same payload but allows later intentional repeats', async () => {
+  await withTempStore(async (historyPath) => {
+    let now = Date.parse('2026-06-01T00:00:00.000Z');
+    const store = new EventStore(historyPath, {
+      maxHistoryEntries: 10,
+      duplicateContentWindowMs: 10_000,
+      now: () => new Date(now)
+    });
+    await store.ready();
+
+    const first = await store.append({ ...baseEvent, sourceDeviceId: 'windows-pc' });
+    now += 5_000;
+    const echo = await store.append({ ...baseEvent, sourceDeviceId: 'macbook' });
+    now += 15_000;
+    const laterRepeat = await store.append({ ...baseEvent, sourceDeviceId: 'mac-mini' });
+
+    assert.equal(echo, null);
+    assert.notEqual(laterRepeat, null);
+    assert.deepEqual(
+      store.recent(10).map((event) => [event.sourceDeviceId, event.sequence]),
+      [
+        ['windows-pc', first.sequence],
+        ['mac-mini', laterRepeat.sequence]
+      ]
+    );
+  });
+});
+
 test('EventStore reloads JSONL history on restart', async () => {
   await withTempStore(async (historyPath) => {
     const firstStore = new EventStore(historyPath, { maxHistoryEntries: 10 });

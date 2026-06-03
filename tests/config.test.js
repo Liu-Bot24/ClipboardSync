@@ -25,6 +25,7 @@ test('readConfig returns defaults with a token', () => {
     historyDisplayLimit: 30,
     maxHistoryBytes: 1_073_741_824,
     maxHistoryAgeMs: 604_800_000,
+    duplicateContentWindowMs: 30_000,
     token: 'unittesttoken0123456789abcdef012345'
   });
 });
@@ -40,7 +41,8 @@ test('readConfig parses overrides', () => {
       CLIPBOARD_HUB_MAX_HISTORY_ENTRIES: '800',
       CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT: '40',
       CLIPBOARD_HUB_MAX_HISTORY_BYTES: '4096',
-      CLIPBOARD_HUB_MAX_HISTORY_AGE_MS: '86400000'
+      CLIPBOARD_HUB_MAX_HISTORY_AGE_MS: '86400000',
+      CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS: '5000'
     }),
     {
       host: '127.0.0.1',
@@ -51,8 +53,19 @@ test('readConfig parses overrides', () => {
       historyDisplayLimit: 40,
       maxHistoryBytes: 4096,
       maxHistoryAgeMs: 86_400_000,
+      duplicateContentWindowMs: 5_000,
       token: 'unittesttoken0123456789abcdef012345'
     }
+  );
+});
+
+test('readConfig allows disabling duplicate content suppression', () => {
+  assert.equal(
+    readConfig({
+      CLIPBOARD_HUB_TOKEN: 'unittesttoken0123456789abcdef012345',
+      CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS: '0'
+    }).duplicateContentWindowMs,
+    0
   );
 });
 
