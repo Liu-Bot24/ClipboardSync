@@ -1,8 +1,35 @@
 let currentState = null;
+let currentLanguage = 'zh-CN';
+const i18n = window.ClipboardSyncI18n;
 const historyEl = document.querySelector('#history');
 const historyStatusEl = document.querySelector('#historyStatus');
 const historyAlwaysOnTopEl = document.querySelector('#historyAlwaysOnTop');
 const clearHistoryEl = document.querySelector('#clearHistory');
+
+function tr(key, params) {
+  return i18n?.t ? i18n.t(currentLanguage, key, params) : key;
+}
+
+function normalizeLanguage(value) {
+  return i18n?.normalizeLanguage ? i18n.normalizeLanguage(value) : 'zh-CN';
+}
+
+function translatedElements(selector) {
+  return typeof document.querySelectorAll === 'function' ? [...document.querySelectorAll(selector)] : [];
+}
+
+function applyTranslations() {
+  document.documentElement.lang = currentLanguage === 'en' ? 'en' : 'zh-CN';
+  for (const element of translatedElements('[data-i18n]')) {
+    element.textContent = tr(element.dataset.i18n);
+  }
+  for (const element of translatedElements('[data-i18n-title]')) {
+    element.title = tr(element.dataset.i18nTitle);
+  }
+  for (const element of translatedElements('[data-i18n-aria-label]')) {
+    element.setAttribute('aria-label', tr(element.dataset.i18nAriaLabel));
+  }
+}
 
 function setHistoryStatus(text) {
   if (historyStatusEl) {
@@ -12,7 +39,7 @@ function setHistoryStatus(text) {
 
 function historyLimitLabel() {
   const limit = Number(currentState?.settings?.historyDisplayLimit);
-  return `历史 · 最近 ${Number.isSafeInteger(limit) && limit > 0 ? limit : 30} 条`;
+  return tr('history.latest', { limit: Number.isSafeInteger(limit) && limit > 0 ? limit : 30 });
 }
 
 function renderHistory() {
@@ -20,7 +47,7 @@ function renderHistory() {
   if (!currentState || currentState.history.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty history-empty';
-    empty.textContent = '暂无历史';
+    empty.textContent = tr('history.none');
     historyEl.append(empty);
     return;
   }
@@ -31,19 +58,19 @@ function renderHistory() {
     button.addEventListener('click', async () => {
       const result = await window.clipboardSync.applyHistory(event.id);
       if (result?.pasted) {
-        setHistoryStatus('已粘贴');
+        setHistoryStatus(tr('history.pasted'));
       } else if (result?.permissionRequired) {
-        setHistoryStatus('需要辅助功能权限');
+        setHistoryStatus(tr('history.permissionRequired'));
       } else if (result === false || result?.applied === false) {
-        setHistoryStatus('未找到历史');
+        setHistoryStatus(tr('history.notFound'));
       } else {
-        setHistoryStatus('已写入剪贴板');
+        setHistoryStatus(tr('history.copied'));
       }
     });
 
     const ip = document.createElement('div');
     ip.className = 'history-ip';
-    const sourceLabel = event.sourceIp || event.sourceDeviceId || '未知 IP';
+    const sourceLabel = event.sourceIp || event.sourceDeviceId || tr('devices.unknownIp');
     ip.textContent = sourceLabel;
     ip.title = sourceLabel;
 
@@ -57,12 +84,12 @@ function renderHistory() {
       if (event.imagePreviewSrc) {
         const image = document.createElement('img');
         image.src = event.imagePreviewSrc;
-        image.alt = '图片剪贴板预览';
+        image.alt = tr('history.imageAlt');
         media.append(image);
       } else {
         const placeholder = document.createElement('span');
         placeholder.className = 'image-placeholder';
-        placeholder.textContent = event.preview || '图片';
+        placeholder.textContent = event.preview && event.preview !== '图片' ? event.preview : tr('history.image');
         media.append(placeholder);
       }
 
@@ -82,12 +109,16 @@ function renderSettings() {
 
 window.clipboardSync.onState((state) => {
   currentState = state;
+  currentLanguage = normalizeLanguage(state.settings?.language);
+  applyTranslations();
   setHistoryStatus(historyLimitLabel());
   renderSettings();
   renderHistory();
 });
 window.clipboardSync.getState().then((state) => {
   currentState = state;
+  currentLanguage = normalizeLanguage(state.settings?.language);
+  applyTranslations();
   setHistoryStatus(historyLimitLabel());
   renderSettings();
   renderHistory();
@@ -99,7 +130,7 @@ historyAlwaysOnTopEl?.addEventListener('change', () =>
 clearHistoryEl?.addEventListener('click', async () => {
   const result = await window.clipboardSync.clearHistory();
   if (result?.cleared === false) {
-    setHistoryStatus('清除失败');
+    setHistoryStatus(tr('history.clearFailed'));
     return;
   }
   currentState = {
@@ -107,5 +138,5 @@ clearHistoryEl?.addEventListener('click', async () => {
     history: []
   };
   renderHistory();
-  setHistoryStatus('全局历史已清除');
+  setHistoryStatus(tr('history.cleared'));
 });

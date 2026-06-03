@@ -20,6 +20,7 @@ import { disableElectronSafeStorageKeychain, safeStorageKeychainSuppressionState
 import { shouldRefreshHistoryOnStatus } from './history-refresh-policy.js';
 import { historyEventForSelection } from './history-selection.js';
 import { HubClient } from './hub-client.js';
+import i18n from './i18n.cjs';
 import { loginItemSettingsFor } from './login-item-settings.js';
 import { MacLocalProxyManager } from './mac-local-proxy.js';
 import { ClipboardLoopGuard } from './loop-guard.js';
@@ -32,7 +33,12 @@ import { installSingleInstanceGuard } from './single-instance.js';
 import { mergeRecentSourceSuggestions } from './source-suggestions.js';
 import { popupActionFor, shouldHidePopupOnBlur, shouldShowInitialPopup } from './startup-window-policy.js';
 import { ClipboardSyncService } from './sync-service.js';
-import { DEVICE_SETTINGS_MENU_LABEL, historyMenuEntryForPlatform, historyMenuIconForEvent } from './tray-menu-template.js';
+import {
+  deviceSettingsMenuLabel,
+  historyMenuEntryForPlatform,
+  historyMenuIconForEvent,
+  languageMenuEntry
+} from './tray-menu-template.js';
 import { trayIconForPlatform } from './tray-icon.js';
 import { uiHistoryEvent } from './ui-history-event.js';
 import { createUiLifecycle } from './ui-lifecycle.js';
@@ -75,19 +81,21 @@ let pasteTargetSampler = null;
 let macLocalProxy = null;
 let hubConnectionSettings = null;
 const uiLifecycle = createUiLifecycle();
+const { normalizeLanguage, t } = i18n;
 
-function statusLabel(state = status) {
-  const labels = {
-    connected: '已连接',
-    disconnected: '已断开',
-    'invalid-hub-url': 'Hub 地址无效',
-    'duplicate-device': '设备重复',
-    'connection-error': '连接错误',
-    'clipboard-error': '剪贴板错误',
-    'hub-error': '服务器错误',
-    starting: '连接中'
+function statusLabel(state = status, language = configStore?.get?.().language) {
+  const languageCode = normalizeLanguage(language);
+  const keys = {
+    connected: 'status.connected',
+    disconnected: 'status.disconnected',
+    'invalid-hub-url': 'status.invalidHubUrl',
+    'duplicate-device': 'status.duplicateDevice',
+    'connection-error': 'status.connectionError',
+    'clipboard-error': 'status.clipboardError',
+    'hub-error': 'status.hubError',
+    starting: 'status.starting'
   };
-  return labels[state.state] || '连接中';
+  return t(languageCode, keys[state.state] || 'status.starting');
 }
 
 function trayIcon() {
@@ -364,13 +372,18 @@ async function runQaDirectPasteSmoke() {
 }
 
 function historyMenuItems() {
+  const language = normalizeLanguage(configStore.get().language);
   const visible = stateForUi().history;
   if (visible.length === 0) {
-    return [{ label: '暂无历史', enabled: false }];
+    return [{ label: t(language, 'history.none'), enabled: false }];
   }
   return visible.map((event) => {
+    const source = event.sourceIp || event.sourceDeviceId || t(language, 'devices.unknownIp');
+    const preview = event.contentType?.startsWith('image/') && event.preview === t('zh-CN', 'history.image')
+      ? t(language, 'history.image')
+      : event.preview;
     const item = {
-      label: menuSafeLabel(`${event.sourceIp || event.sourceDeviceId || '未知 IP'} ${event.preview}`.trim()),
+      label: menuSafeLabel(`${source} ${preview || ''}`.trim()),
       click: () => applyHistory(event.id, { paste: true })
     };
     const icon = historyMenuIconForEvent(event, nativeImage);
@@ -386,33 +399,35 @@ function buildTrayMenu() {
     return;
   }
   const settings = configStore.get();
+  const language = normalizeLanguage(settings.language);
   const statusDetail = status.message ? [{ label: menuSafeLabel(status.message), enabled: false }] : [];
   const template = [
-    { label: `状态：${statusLabel()}`, enabled: false },
+    { label: `${t(language, 'menu.statusPrefix')}${statusLabel(status, language)}`, enabled: false },
     ...statusDetail,
-    { label: DEVICE_SETTINGS_MENU_LABEL, click: () => showPopup({ forceShow: true }) },
-    historyMenuEntryForPlatform(process.platform, historyMenuItems, () => showHistoryPopup()),
+    { label: deviceSettingsMenuLabel(language), click: () => showPopup({ forceShow: true }) },
+    historyMenuEntryForPlatform(process.platform, historyMenuItems, () => showHistoryPopup(), language),
     { type: 'separator' },
     {
-      label: '暂停发送',
+      label: t(language, 'settings.pauseSend'),
       type: 'checkbox',
       checked: settings.pauseSend,
       click: (item) => updateSettings({ pauseSend: item.checked })
     },
     {
-      label: '暂停接收',
+      label: t(language, 'settings.pauseReceive'),
       type: 'checkbox',
       checked: settings.pauseReceive,
       click: (item) => updateSettings({ pauseReceive: item.checked })
     },
     {
-      label: '开机启动',
+      label: t(language, 'settings.autoLaunch'),
       type: 'checkbox',
       checked: settings.autoLaunch,
       click: (item) => updateSettings({ autoLaunch: item.checked })
     },
+    languageMenuEntry(language, (nextLanguage) => updateSettings({ language: nextLanguage })),
     { type: 'separator' },
-    { label: '退出', click: () => app.quit() }
+    { label: t(language, 'action.quit'), click: () => app.quit() }
   ];
   tray.setContextMenu(Menu.buildFromTemplate(template));
 }
@@ -876,6 +891,8 @@ async function main() {
 async function captureQaScreenshots() {
   const theme = process.env.CLIPBOARD_SYNC_QA_THEME === 'dark' ? 'dark' : 'light';
   const outputDir = process.env.CLIPBOARD_SYNC_QA_OUTPUT_DIR || join(APP_ROOT, 'tmp');
+  const language = normalizeLanguage(configStore.get().language);
+  const qaHistoryMenuEntry = historyMenuEntryForPlatform(process.platform, () => [], () => showHistoryPopup(), language);
   await mkdir(outputDir, { recursive: true });
   showPopup({ forceShow: true });
   await waitForWindowReady(popup, 'main panel');
@@ -884,16 +901,18 @@ async function captureQaScreenshots() {
   await new Promise((resolve) => setTimeout(resolve, 1_000));
   const mainReport = await popup.webContents.executeJavaScript(`({
     platform: ${JSON.stringify(process.platform)},
-    trayMainEntryLabel: ${JSON.stringify(DEVICE_SETTINGS_MENU_LABEL)},
-    historyEntryKind: ${JSON.stringify(
-      historyMenuEntryForPlatform(process.platform, () => [], () => showHistoryPopup()).submenu ? 'submenu' : 'popup'
-    )},
-    mainWindowEntryLabel: ${JSON.stringify(
-      historyMenuEntryForPlatform(process.platform, () => [], () => showHistoryPopup()).submenu?.[0]?.label || null
-    )},
+    language: ${JSON.stringify(language)},
+    trayMainEntryLabel: ${JSON.stringify(deviceSettingsMenuLabel(language))},
+    historyEntryKind: ${JSON.stringify(qaHistoryMenuEntry.submenu ? 'submenu' : 'popup')},
+    mainWindowEntryLabel: ${JSON.stringify(qaHistoryMenuEntry.submenu?.[0]?.label || null)},
     title: document.querySelector('.title')?.textContent.trim(),
     status: document.querySelector('#status')?.textContent.trim(),
     headers: [...document.querySelectorAll('thead th')].map((item) => item.textContent.trim()),
+    headerMetrics: [...document.querySelectorAll('thead th')].map((item) => ({
+      text: item.textContent.trim(),
+      clientWidth: item.clientWidth,
+      scrollWidth: item.scrollWidth
+    })),
     rows: [...document.querySelectorAll('#devices tr')].map((row) => [...row.children].map((cell) => cell.textContent.trim())),
     historyButtonHidden: document.querySelector('#historyButton')?.hidden ?? null,
     connectionOpen: Boolean(document.querySelector('.connection')?.open),

@@ -108,6 +108,7 @@ test('verify:ui keeps themed artifacts and asserts rendered UI markers', async (
   assert.match(main, /ui-history-\$\{theme\}\.png/);
   assert.match(main, /ui-qa-\$\{theme\}\.json/);
   assert.match(main, /document\.querySelectorAll\('thead th'\)/);
+  assert.match(main, /headerMetrics/);
   assert.match(main, /document\.querySelectorAll\('\.history-item'\)/);
   assert.match(main, /windowProfile/);
   assert.match(main, /imageTagCount/);
@@ -141,7 +142,11 @@ test('verify:ui keeps themed artifacts and asserts rendered UI markers', async (
   assert.match(assertScript, /ui-main-\$\{theme\}\.png/);
   assert.match(assertScript, /ui-history-\$\{theme\}\.png/);
   assert.match(assertScript, /ui-qa-\$\{theme\}\.json/);
-  assert.match(assertScript, /assertDeepEqual\(report\.main\.headers, \['IP', '发送', '接收'\]/);
+  assert.match(assertScript, /const \{ normalizeLanguage, t \} = require\('\.\.\/src\/client\/i18n\.cjs'\)/);
+  assert.match(assertScript, /const language = normalizeLanguage\(process\.env\.CLIPBOARD_CLIENT_LANGUAGE\)/);
+  assert.match(assertScript, /headers: \['IP', t\(language, 'devices\.send'\), t\(language, 'devices\.receive'\)\]/);
+  assert.match(assertScript, /assertDeepEqual\(report\.main\.headers, expected\.headers/);
+  assert.match(assertScript, /assertNoTextClipping\(report\.main\.headerMetrics, 'device table header'\)/);
   assert.match(assertScript, /assertEqual\(report\.history\.itemCount, 30/);
   assert.match(assertScript, /assertNoHorizontalOverflow\(report\.history\.viewport, 'history panel'\)/);
   assert.match(assertScript, /imagePlaceholderTexts/);

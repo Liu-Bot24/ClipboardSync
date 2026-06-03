@@ -2,11 +2,13 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import os from 'node:os';
+import i18n from './i18n.cjs';
 import { normalizeIgnoredSourcePatterns } from './source-ignore.js';
 
 const DEFAULT_HUB_URL = '';
 const DEFAULT_MAX_SEND_BYTES = 33_554_432;
 export const DEFAULT_HISTORY_DISPLAY_LIMIT = 30;
+const { normalizeLanguage } = i18n;
 
 function parsePositiveInteger(value, name) {
   if (!/^[1-9]\d*$/.test(String(value || ''))) {
@@ -67,6 +69,7 @@ export function defaultClientSettings(env = process.env) {
     pauseReceive: false,
     historyAlwaysOnTop: true,
     historyDisplayLimit: normalizeHistoryDisplayLimit(env.CLIPBOARD_CLIENT_HISTORY_DISPLAY_LIMIT),
+    language: normalizeLanguage(env.CLIPBOARD_CLIENT_LANGUAGE),
     ignoreUnknownSource: false,
     ignoredSourcePatterns: normalizeIgnoredSourcePatterns(env.CLIPBOARD_CLIENT_IGNORED_SOURCES || ''),
     maxSendBytes: DEFAULT_MAX_SEND_BYTES,
@@ -131,6 +134,7 @@ export class ConfigStore {
     }
     this.settings.ignoredSourcePatterns = normalizeIgnoredSourcePatterns(this.settings.ignoredSourcePatterns);
     this.settings.historyDisplayLimit = normalizeHistoryDisplayLimit(this.settings.historyDisplayLimit);
+    this.settings.language = normalizeLanguage(this.settings.language);
     return this.settings;
   }
 
@@ -177,6 +181,9 @@ export class ConfigStore {
         normalizedPatch.historyDisplayLimit,
         this.settings.historyDisplayLimit
       );
+    }
+    if ('language' in normalizedPatch) {
+      normalizedPatch.language = normalizeLanguage(normalizedPatch.language);
     }
     this.settings = {
       ...this.settings,

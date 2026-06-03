@@ -1,4 +1,6 @@
 let currentState = null;
+let currentLanguage = 'zh-CN';
+const i18n = window.ClipboardSyncI18n;
 
 const statusEl = document.querySelector('#status');
 const devicesEl = document.querySelector('#devices');
@@ -14,17 +16,45 @@ const ignoredSourcePatternsEl = document.querySelector('#ignoredSourcePatterns')
 const recentSourcesEl = document.querySelector('#recentSources');
 const saveIgnoreEl = document.querySelector('#saveIgnore');
 
+function tr(key, params) {
+  return i18n?.t ? i18n.t(currentLanguage, key, params) : key;
+}
+
+function normalizeLanguage(value) {
+  return i18n?.normalizeLanguage ? i18n.normalizeLanguage(value) : 'zh-CN';
+}
+
+function translatedElements(selector) {
+  return typeof document.querySelectorAll === 'function' ? [...document.querySelectorAll(selector)] : [];
+}
+
+function applyTranslations() {
+  document.documentElement.lang = currentLanguage === 'en' ? 'en' : 'zh-CN';
+  for (const element of translatedElements('[data-i18n]')) {
+    element.textContent = tr(element.dataset.i18n);
+  }
+  for (const element of translatedElements('[data-i18n-title]')) {
+    element.title = tr(element.dataset.i18nTitle);
+  }
+  for (const element of translatedElements('[data-i18n-aria-label]')) {
+    element.setAttribute('aria-label', tr(element.dataset.i18nAriaLabel));
+  }
+  for (const element of translatedElements('[data-i18n-placeholder]')) {
+    element.placeholder = tr(element.dataset.i18nPlaceholder);
+  }
+}
+
 function statusLabel(state) {
-  const labels = {
-    connected: '已连接',
-    disconnected: '已断开',
-    'invalid-hub-url': 'Hub 地址无效',
-    'duplicate-device': '设备重复',
-    'connection-error': '连接错误',
-    'clipboard-error': '剪贴板错误',
-    'hub-error': '服务器错误'
+  const keys = {
+    connected: 'status.connected',
+    disconnected: 'status.disconnected',
+    'invalid-hub-url': 'status.invalidHubUrl',
+    'duplicate-device': 'status.duplicateDevice',
+    'connection-error': 'status.connectionError',
+    'clipboard-error': 'status.clipboardError',
+    'hub-error': 'status.hubError'
   };
-  return labels[state.status?.state] || '连接中';
+  return tr(keys[state.status?.state] || 'status.starting');
 }
 
 function statusText(state) {
@@ -74,7 +104,7 @@ function renderDevices() {
     const cell = document.createElement('td');
     cell.colSpan = 3;
     cell.className = 'empty';
-    cell.textContent = '暂无其他设备';
+    cell.textContent = tr('devices.noOtherDevices');
     row.append(cell);
     devicesEl.append(row);
     return;
@@ -84,7 +114,7 @@ function renderDevices() {
     const rule = ruleForGroup(group);
     const row = document.createElement('tr');
     const ip = document.createElement('td');
-    const deviceLabel = group.ip || '未知 IP';
+    const deviceLabel = group.ip || tr('devices.unknownIp');
     ip.textContent = deviceLabel;
     ip.title = group.ip || group.key;
 
@@ -93,7 +123,7 @@ function renderDevices() {
     sendBox.type = 'checkbox';
     sendBox.checked = rule.send;
     sendBox.indeterminate = rule.sendMixed;
-    sendBox.title = rule.sendMixed ? '部分设备已关闭发送' : '';
+    sendBox.title = rule.sendMixed ? tr('devices.sendMixed') : '';
     sendBox.addEventListener('change', () => window.clipboardSync.updateRule(group.key, 'send', sendBox.checked));
     send.append(sendBox);
 
@@ -102,7 +132,7 @@ function renderDevices() {
     receiveBox.type = 'checkbox';
     receiveBox.checked = rule.receive;
     receiveBox.indeterminate = rule.receiveMixed;
-    receiveBox.title = rule.receiveMixed ? '部分设备已关闭接收' : '';
+    receiveBox.title = rule.receiveMixed ? tr('devices.receiveMixed') : '';
     receiveBox.addEventListener('change', () => window.clipboardSync.updateRule(group.key, 'receive', receiveBox.checked));
     receive.append(receiveBox);
 
@@ -124,7 +154,7 @@ function renderRecentSources() {
   if (sources.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'recent-source-empty';
-    empty.textContent = '暂无最近复制来源';
+    empty.textContent = tr('ignore.noRecentSources');
     recentSourcesEl.append(empty);
     return;
   }
@@ -137,16 +167,16 @@ function renderRecentSources() {
     text.className = 'recent-source-text';
     const label = document.createElement('div');
     label.className = 'recent-source-label';
-    label.textContent = source.label || source.pattern;
+    label.textContent = source.unknown ? tr('ignore.unknownSourceLabel') : source.label || source.pattern;
     const detail = document.createElement('div');
     detail.className = 'recent-source-detail';
-    detail.textContent = source.detail || source.pattern || '';
+    detail.textContent = source.unknown ? tr('ignore.unknownSourceDetail') : source.detail || source.pattern || '';
     text.append(label, detail);
 
     const add = document.createElement('button');
     add.type = 'button';
     add.className = 'source-add-button';
-    add.textContent = source.unknown ? '忽略' : '加入';
+    add.textContent = source.unknown ? tr('action.ignore') : tr('action.add');
     add.disabled = !source.pattern && !source.unknown;
     add.addEventListener('click', () => {
       if (source.unknown) {
@@ -168,6 +198,8 @@ function renderRecentSources() {
 
 function render(state) {
   currentState = state;
+  currentLanguage = normalizeLanguage(state.settings?.language);
+  applyTranslations();
   statusEl.textContent = statusText(state);
   statusEl.title = state.status?.message || statusLabel(state);
   pauseSendEl.checked = state.settings.pauseSend;
@@ -175,7 +207,7 @@ function render(state) {
   autoLaunchEl.checked = state.settings.autoLaunch;
   hubUrlEl.value = state.settings.hubUrl;
   tokenEl.value = '';
-  tokenEl.placeholder = state.settings.hasToken ? '已配置，留空不改' : '未配置，可留空';
+  tokenEl.placeholder = state.settings.hasToken ? tr('connection.tokenConfigured') : tr('connection.tokenEmpty');
   ignoreUnknownSourceEl.checked = Boolean(state.settings.ignoreUnknownSource);
   ignoredSourcePatternsEl.value = (state.settings.ignoredSourcePatterns || []).join('\n');
   if (!state.settings.hubUrl) {

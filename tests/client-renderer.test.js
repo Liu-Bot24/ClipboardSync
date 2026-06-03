@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import vm from 'node:vm';
+
+const require = createRequire(import.meta.url);
+const i18n = require('../src/client/i18n.cjs');
 
 class FakeElement {
   constructor(tagName = 'div') {
@@ -35,6 +39,10 @@ class FakeElement {
   addEventListener(type, listener) {
     this.listeners[type] ||= [];
     this.listeners[type].push(listener);
+  }
+
+  setAttribute(name, value) {
+    this[name] = value;
   }
 
   async dispatch(type) {
@@ -81,8 +89,10 @@ function fakeDocument(ids) {
   const elements = new Map(ids.map((id) => [`#${id}`, new FakeElement()]));
   elements.set('.connection', new FakeElement('details'));
   return {
+    documentElement: { lang: '' },
     elements,
     createElement: (tagName) => new FakeElement(tagName),
+    querySelectorAll: () => [],
     querySelector(selector) {
       if (!elements.has(selector)) {
         throw new Error(`Missing fake element: ${selector}`);
@@ -95,7 +105,7 @@ function fakeDocument(ids) {
 async function runRenderer(scriptName, { ids, clipboardSync }) {
   const document = fakeDocument(ids);
   const script = await readFile(join(process.cwd(), 'src/client', scriptName), 'utf8');
-  vm.runInNewContext(script, { document, window: { clipboardSync } }, { filename: scriptName });
+  vm.runInNewContext(script, { document, window: { clipboardSync, ClipboardSyncI18n: i18n } }, { filename: scriptName });
   await new Promise((resolve) => setImmediate(resolve));
   return document;
 }
@@ -274,6 +284,76 @@ test('ui renderer turns unidentified recent copy sources into the unknown-source
 
   assert.equal(document.querySelector('#ignoreUnknownSource').checked, true);
   assert.deepEqual(plain(calls), [['updateSetting', { ignoreUnknownSource: true }]]);
+});
+
+test('ui renderer localizes dynamic main window text in English', async () => {
+  const document = await runRenderer('ui-renderer.js', {
+    ids: MAIN_UI_IDS,
+    clipboardSync: {
+      platform: 'darwin',
+      onState: () => {},
+      getState: () =>
+        Promise.resolve(
+          uiState({
+            status: { state: 'connected' },
+            settings: {
+              ...uiState().settings,
+              language: 'en',
+              hubUrl: '',
+              hasToken: false,
+              ignoredSourcePatterns: []
+            },
+            devices: [{ deviceId: 'macbook', ip: '192.0.2.10' }],
+            recentSources: []
+          })
+        ),
+      updateSetting: () => {},
+      updateRule: () => {},
+      refresh: () => {},
+      quit: () => {},
+      showHistory: () => {}
+    }
+  });
+
+  assert.equal(document.querySelector('#status').textContent, 'Connected');
+  assert.equal(document.querySelector('#token').placeholder, 'Not configured; can be empty');
+  assert.equal(document.querySelector('#devices').children[0].children[0].textContent, 'No other devices');
+  assert.equal(document.querySelector('#recentSources').children[0].textContent, 'No recent copy sources');
+});
+
+test('history renderer localizes English history actions', async () => {
+  const document = await runRenderer('history-renderer.js', {
+    ids: ['history', 'historyStatus', 'historyAlwaysOnTop', 'refreshHistory', 'clearHistory'],
+    clipboardSync: {
+      onState: () => {},
+      getState: () =>
+        Promise.resolve({
+          settings: {
+            language: 'en',
+            historyAlwaysOnTop: true,
+            historyDisplayLimit: 12
+          },
+          history: [
+            { id: 'text-1', sourceIp: '192.0.2.20', contentType: 'text/plain', preview: 'hello' },
+            { id: 'image-1', contentType: 'image/png', preview: '图片', imagePreviewSrc: null }
+          ]
+        }),
+      applyHistory: () => Promise.resolve({ applied: true, pasted: false }),
+      clearHistory: () => Promise.resolve({ cleared: true }),
+      updateSetting: () => {},
+      refresh: () => {}
+    }
+  });
+
+  assert.equal(document.querySelector('#historyStatus').textContent, 'History · Latest 12');
+  const items = document.querySelector('#history').children;
+  assert.equal(items[1].children[0].textContent, 'Unknown IP');
+  assert.equal(items[1].find((element) => element.className === 'image-placeholder').textContent, 'Image');
+
+  await items[0].dispatch('click');
+  assert.equal(document.querySelector('#historyStatus').textContent, 'Copied to clipboard');
+  await document.querySelector('#clearHistory').dispatch('click');
+  assert.equal(document.querySelector('#historyStatus').textContent, 'Global history cleared');
 });
 
 test('ui renderer opens connection settings when the public package is not configured', async () => {

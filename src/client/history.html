@@ -11,15 +11,15 @@
     <main class="shell history-shell">
       <header class="topbar">
         <div>
-          <div class="title">主窗口</div>
+          <div class="title" data-i18n="app.mainWindow">主窗口</div>
           <div id="historyStatus" class="status">历史 · 最近 30 条</div>
         </div>
         <div class="top-actions">
-          <label class="pin-control"><input id="historyAlwaysOnTop" type="checkbox" /> 总在最前</label>
-          <button id="clearHistory" class="text-button danger-button" title="清除全局历史" aria-label="清除全局历史">
+          <label class="pin-control"><input id="historyAlwaysOnTop" type="checkbox" /> <span data-i18n="settings.alwaysOnTop">总在最前</span></label>
+          <button id="clearHistory" class="text-button danger-button" title="清除全局历史" aria-label="清除全局历史" data-i18n="history.clearGlobal" data-i18n-title="history.clearGlobal" data-i18n-aria-label="history.clearGlobal">
             清除全局历史
           </button>
-          <button id="refreshHistory" class="icon-button" title="刷新" aria-label="刷新">
+          <button id="refreshHistory" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="action.refresh" data-i18n-aria-label="action.refresh">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M20 7v5h-5" />
               <path d="M4 17v-5h5" />
@@ -31,6 +31,7 @@
       </header>
       <section id="history" class="history-list"></section>
     </main>
+    <script src="./i18n.cjs"></script>
     <script src="./history-renderer.js"></script>
   </body>
 </html>

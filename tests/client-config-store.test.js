@@ -69,6 +69,21 @@ test('defaultClientSettings uses the hostname as display name but not as the who
   assert.equal(settings.historyAlwaysOnTop, true);
   assert.equal(settings.historyDisplayLimit, 30);
   assert.equal(settings.ignoreUnknownSource, false);
+  assert.equal(settings.language, 'zh-CN');
+});
+
+test('ConfigStore normalizes supported client languages', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = join(dir, 'config.json');
+    await writeFile(configPath, JSON.stringify({ language: 'en-US' }));
+
+    const store = new ConfigStore(fakeApp(dir), { path: configPath, bootstrapPaths: [], env: {} });
+    const settings = await store.load();
+    assert.equal(settings.language, 'en');
+
+    const updated = await store.update({ language: 'fr-FR' });
+    assert.equal(updated.language, 'zh-CN');
+  });
 });
 
 test('defaultClientSettings can take a packaged or Hub-provided history display limit', () => {

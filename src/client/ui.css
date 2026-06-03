@@ -260,7 +260,8 @@ th:nth-child(2),
 th:nth-child(3),
 td:nth-child(2),
 td:nth-child(3) {
-  width: 52px;
+  width: 76px;
+  padding-inline: 8px;
   text-align: center;
 }
 

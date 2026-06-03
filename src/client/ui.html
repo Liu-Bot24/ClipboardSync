@@ -11,14 +11,14 @@
     <main class="shell">
       <header class="topbar">
         <div>
-          <div class="title">共享剪贴板</div>
+          <div class="title" data-i18n="app.sharedClipboard">共享剪贴板</div>
           <div id="status" class="status">连接中</div>
         </div>
         <div class="top-actions">
-          <button id="historyButton" class="icon-button" title="历史" aria-label="历史" hidden>
+          <button id="historyButton" class="icon-button" title="历史" aria-label="历史" data-i18n-title="action.history" data-i18n-aria-label="action.history" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2"/></svg>
           </button>
-          <button id="refresh" class="icon-button" title="刷新" aria-label="刷新">
+          <button id="refresh" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="action.refresh" data-i18n-aria-label="action.refresh">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M20 7v5h-5" />
               <path d="M4 17v-5h5" />
@@ -30,30 +30,30 @@
       </header>
 
       <section class="controls">
-        <label><input id="pauseSend" type="checkbox" /> 暂停发送</label>
-        <label><input id="pauseReceive" type="checkbox" /> 暂停接收</label>
-        <label><input id="autoLaunch" type="checkbox" /> 开机启动</label>
+        <label><input id="pauseSend" type="checkbox" /> <span data-i18n="settings.pauseSend">暂停发送</span></label>
+        <label><input id="pauseReceive" type="checkbox" /> <span data-i18n="settings.pauseReceive">暂停接收</span></label>
+        <label><input id="autoLaunch" type="checkbox" /> <span data-i18n="settings.autoLaunch">开机启动</span></label>
       </section>
 
       <details class="connection">
-        <summary>连接</summary>
+        <summary data-i18n="connection.section">连接</summary>
         <div class="connection-grid">
-          <label>服务器 <input id="hubUrl" type="text" /></label>
-          <label>令牌（可选） <input id="token" type="password" /></label>
-          <button id="saveConnection">保存</button>
+          <label><span data-i18n="connection.server">服务器</span> <input id="hubUrl" type="text" /></label>
+          <label><span data-i18n="connection.token">令牌（可选）</span> <input id="token" type="password" /></label>
+          <button id="saveConnection" data-i18n="action.save">保存</button>
         </div>
       </details>
 
       <details class="ignore-rules">
-        <summary>忽略</summary>
+        <summary data-i18n="ignore.section">忽略</summary>
         <div class="ignore-grid">
-          <label class="wide-option"><input id="ignoreUnknownSource" type="checkbox" /> 忽略未知复制来源</label>
+          <label class="wide-option"><input id="ignoreUnknownSource" type="checkbox" /> <span data-i18n="ignore.unknownSource">忽略未知复制来源</span></label>
           <div class="recent-source-group">
-            <div class="field-label">最近复制来源</div>
+            <div class="field-label" data-i18n="ignore.recentSources">最近复制来源</div>
             <div id="recentSources" class="recent-sources"></div>
           </div>
-          <label>规则 <textarea id="ignoredSourcePatterns" rows="3" spellcheck="false" placeholder="可手动填写，一行一个"></textarea></label>
-          <button id="saveIgnore">保存</button>
+          <label><span data-i18n="ignore.rules">规则</span> <textarea id="ignoredSourcePatterns" rows="3" spellcheck="false" placeholder="可手动填写，一行一个" data-i18n-placeholder="ignore.rulesPlaceholder"></textarea></label>
+          <button id="saveIgnore" data-i18n="action.save">保存</button>
         </div>
       </details>
 
@@ -62,8 +62,8 @@
           <thead>
             <tr>
               <th>IP</th>
-              <th>发送</th>
-              <th>接收</th>
+              <th data-i18n="devices.send">发送</th>
+              <th data-i18n="devices.receive">接收</th>
             </tr>
           </thead>
           <tbody id="devices"></tbody>
@@ -71,9 +71,10 @@
       </section>
 
       <footer>
-        <button id="quit">退出</button>
+        <button id="quit" data-i18n="action.quit">退出</button>
       </footer>
     </main>
+    <script src="./i18n.cjs"></script>
     <script src="./ui-renderer.js"></script>
   </body>
 </html>

@@ -1,6 +1,6 @@
 {
   "name": "clipboard-hub",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Self-hosted shared clipboard hub for Mac and Windows clients.",

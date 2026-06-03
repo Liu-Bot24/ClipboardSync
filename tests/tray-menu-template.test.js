@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { DEVICE_SETTINGS_MENU_LABEL, historyMenuEntryForPlatform, historyMenuIconForEvent } from '../src/client/tray-menu-template.js';
+import {
+  DEVICE_SETTINGS_MENU_LABEL,
+  historyMenuEntryForPlatform,
+  historyMenuIconForEvent,
+  languageMenuEntry
+} from '../src/client/tray-menu-template.js';
 
 test('device settings menu label describes the send receive table action', () => {
   assert.equal(DEVICE_SETTINGS_MENU_LABEL, '收发设置');
@@ -22,6 +27,23 @@ test('historyMenuEntryForPlatform keeps Windows history as a popup action', () =
   assert.equal(menu.label, '历史');
   assert.equal(menu.click, click);
   assert.equal('submenu' in menu, false);
+});
+
+test('languageMenuEntry switches between Chinese and English from the tray menu', () => {
+  const calls = [];
+  const menu = languageMenuEntry('en', (language) => calls.push(language));
+
+  assert.equal(menu.label, 'Language');
+  assert.deepEqual(
+    menu.submenu.map((item) => ({ label: item.label, type: item.type, checked: item.checked })),
+    [
+      { label: '简体中文', type: 'radio', checked: false },
+      { label: 'English', type: 'radio', checked: true }
+    ]
+  );
+
+  menu.submenu[0].click();
+  assert.deepEqual(calls, ['zh-CN']);
 });
 
 test('historyMenuIconForEvent creates a real thumbnail icon for image history menu items', () => {
