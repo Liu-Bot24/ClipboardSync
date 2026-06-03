@@ -2,15 +2,36 @@ import i18n from './i18n.cjs';
 
 export const DEVICE_SETTINGS_MENU_LABEL = '收发设置';
 export const HISTORY_MENU_ICON_SIZE = 18;
+const MAX_HISTORY_MENU_ICON_CACHE_ENTRIES = 120;
 const { normalizeLanguage, supportedLanguages, t } = i18n;
 
 export function deviceSettingsMenuLabel(language = 'zh-CN') {
   return t(language, 'menu.deviceSettings');
 }
 
-export function historyMenuIconForEvent(event, nativeImage, size = HISTORY_MENU_ICON_SIZE) {
+function cacheKeyForMenuIcon(event, size) {
+  if (!event?.id || !event.imagePreviewSrc) {
+    return null;
+  }
+  return [event.id, event.imagePreviewSrc.length, size].join('\u001f');
+}
+
+function setBoundedCache(cache, key, value) {
+  cache.set(key, value);
+  while (cache.size > MAX_HISTORY_MENU_ICON_CACHE_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    cache.delete(oldestKey);
+  }
+}
+
+export function historyMenuIconForEvent(event, nativeImage, size = HISTORY_MENU_ICON_SIZE, cache = null) {
   if (!event?.contentType?.startsWith('image/') || !event.imagePreviewSrc || !nativeImage?.createFromDataURL) {
     return undefined;
+  }
+  const iconCache = cache instanceof Map ? cache : null;
+  const cacheKey = cacheKeyForMenuIcon(event, size);
+  if (iconCache && cacheKey && iconCache.has(cacheKey)) {
+    return iconCache.get(cacheKey);
   }
 
   let image;
@@ -33,6 +54,9 @@ export function historyMenuIconForEvent(event, nativeImage, size = HISTORY_MENU_
         })
       : image;
   icon?.setTemplateImage?.(false);
+  if (iconCache && cacheKey && icon) {
+    setBoundedCache(iconCache, cacheKey, icon);
+  }
   return icon;
 }
 

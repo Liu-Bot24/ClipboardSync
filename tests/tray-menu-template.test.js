@@ -80,6 +80,50 @@ test('historyMenuIconForEvent creates a real thumbnail icon for image history me
   assert.equal(resizedIcon.template, false);
 });
 
+test('historyMenuIconForEvent reuses cached native menu icons', () => {
+  let decodeCount = 0;
+  const cache = new Map();
+  const first = historyMenuIconForEvent(
+    {
+      id: 'image-menu-cached',
+      contentType: 'image/png',
+      imagePreviewSrc: 'data:image/png;base64,aW1hZ2U='
+    },
+    {
+      createFromDataURL() {
+        decodeCount += 1;
+        return {
+          isEmpty: () => false,
+          resize: () => ({ setTemplateImage() {} })
+        };
+      }
+    },
+    18,
+    cache
+  );
+  const second = historyMenuIconForEvent(
+    {
+      id: 'image-menu-cached',
+      contentType: 'image/png',
+      imagePreviewSrc: 'data:image/png;base64,aW1hZ2U='
+    },
+    {
+      createFromDataURL() {
+        decodeCount += 1;
+        return {
+          isEmpty: () => false,
+          resize: () => ({ setTemplateImage() {} })
+        };
+      }
+    },
+    18,
+    cache
+  );
+
+  assert.equal(second, first);
+  assert.equal(decodeCount, 1);
+});
+
 test('historyMenuIconForEvent leaves text and placeholder image history without an icon', () => {
   assert.equal(
     historyMenuIconForEvent(

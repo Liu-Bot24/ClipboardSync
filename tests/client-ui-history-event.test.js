@@ -77,6 +77,40 @@ test('uiHistoryEvent uses native thumbnails for larger image history when availa
   assert.equal(event.imagePreviewSrc, `data:image/png;base64,${Buffer.from('thumb').toString('base64')}`);
 });
 
+test('uiHistoryEvent reuses cached image previews for the same history event', () => {
+  let decodeCount = 0;
+  const cache = new Map();
+  const event = {
+    id: 'image-cached',
+    sha256: 'same-image-hash',
+    sourceDeviceId: 'macbook',
+    contentType: 'image/png',
+    encoding: 'base64',
+    content: Buffer.alloc(17 * 1024 * 1024).toString('base64'),
+    byteLength: 17 * 1024 * 1024
+  };
+  const nativeImage = {
+    createFromBuffer() {
+      decodeCount += 1;
+      return {
+        isEmpty: () => false,
+        getSize: () => ({ width: 400, height: 200 }),
+        resize: () => ({
+          toPNG: () => Buffer.from('thumb')
+        }),
+        toPNG: () => Buffer.from('original')
+      };
+    }
+  };
+
+  const first = uiHistoryEvent(event, { nativeImage, cache });
+  const second = uiHistoryEvent(event, { nativeImage, cache });
+
+  assert.equal(first.imagePreviewSrc, `data:image/png;base64,${Buffer.from('thumb').toString('base64')}`);
+  assert.deepEqual(second, first);
+  assert.equal(decodeCount, 1);
+});
+
 test('uiHistoryEvent still exposes valid small image data when native thumbnail decode is unavailable', () => {
   const content = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP8z8AARQAFAAHeAitJAAAAAElFTkSuQmCC';
   const event = uiHistoryEvent(

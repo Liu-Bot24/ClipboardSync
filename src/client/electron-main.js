@@ -80,6 +80,8 @@ let lastExternalPasteTarget = null;
 let pasteTargetSampler = null;
 let macLocalProxy = null;
 let hubConnectionSettings = null;
+const uiHistoryEventCache = new Map();
+const historyMenuIconCache = new Map();
 const uiLifecycle = createUiLifecycle();
 const { normalizeLanguage, t } = i18n;
 
@@ -102,6 +104,19 @@ function trayIcon() {
   return trayIconForPlatform({ nativeImage, readFileSync, iconPath: isWindows ? WINDOWS_TRAY_ICON_PATH : MAC_TRAY_ICON_PATH });
 }
 
+function clearHistoryRenderCaches() {
+  uiHistoryEventCache.clear();
+  historyMenuIconCache.clear();
+}
+
+function visibleHistoryForUi(settings = configStore.get()) {
+  return filterVisibleHistory(history, settings, normalizeHistoryDisplayLimit(settings.historyDisplayLimit));
+}
+
+function uiHistoryForSettings(settings = configStore.get()) {
+  return visibleHistoryForUi(settings).map((event) => uiHistoryEvent(event, { nativeImage, cache: uiHistoryEventCache }));
+}
+
 function stateForUi() {
   const settings = configStore.get();
   const historyDisplayLimit = normalizeHistoryDisplayLimit(settings.historyDisplayLimit);
@@ -115,7 +130,7 @@ function stateForUi() {
     },
     devices,
     recentSources,
-    history: filterVisibleHistory(history, settings, historyDisplayLimit).map((event) => uiHistoryEvent(event, { nativeImage }))
+    history: uiHistoryForSettings(settings)
   };
 }
 
@@ -188,6 +203,7 @@ async function clearHistory() {
       await hub.clearHistory();
     }
     history = [];
+    clearHistoryRenderCaches();
     broadcastState();
     return { cleared: true };
   } catch (error) {
@@ -373,7 +389,7 @@ async function runQaDirectPasteSmoke() {
 
 function historyMenuItems() {
   const language = normalizeLanguage(configStore.get().language);
-  const visible = stateForUi().history;
+  const visible = uiHistoryForSettings();
   if (visible.length === 0) {
     return [{ label: t(language, 'history.none'), enabled: false }];
   }
@@ -386,7 +402,7 @@ function historyMenuItems() {
       label: menuSafeLabel(`${source} ${preview || ''}`.trim()),
       click: () => applyHistory(event.id, { paste: true })
     };
-    const icon = historyMenuIconForEvent(event, nativeImage);
+    const icon = historyMenuIconForEvent(event, nativeImage, undefined, historyMenuIconCache);
     if (icon) {
       item.icon = icon;
     }
@@ -829,6 +845,7 @@ async function main() {
   });
   hub.on('history-cleared', () => {
     history = [];
+    clearHistoryRenderCaches();
     broadcastState();
   });
   hub.on('error', (error) => setStatus({ state: 'connection-error', message: error.message }));

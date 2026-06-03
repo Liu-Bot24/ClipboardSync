@@ -2,6 +2,31 @@ import { eventPreview } from './clipboard-content.js';
 
 const MAX_INLINE_IMAGE_PREVIEW_BYTES = 16 * 1024 * 1024;
 const MAX_THUMBNAIL_EDGE = 160;
+const MAX_UI_HISTORY_CACHE_ENTRIES = 120;
+
+function cacheKeyForEvent(event) {
+  const identity = event?.id || event?.sha256;
+  if (!identity) {
+    return null;
+  }
+  return [
+    identity,
+    event.sourceDeviceId || '',
+    event.sourceIp || '',
+    event.contentType || '',
+    event.encoding || '',
+    event.byteLength || '',
+    typeof event.content === 'string' ? event.content.length : ''
+  ].join('\u001f');
+}
+
+function setBoundedCache(cache, key, value) {
+  cache.set(key, value);
+  while (cache.size > MAX_UI_HISTORY_CACHE_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    cache.delete(oldestKey);
+  }
+}
 
 function thumbnailSrc(buffer, nativeImage) {
   if (!nativeImage) {
@@ -62,7 +87,13 @@ function imagePreviewSrc(event, options = {}) {
 }
 
 export function uiHistoryEvent(event, options = {}) {
-  return {
+  const cache = options.cache instanceof Map ? options.cache : null;
+  const cacheKey = cacheKeyForEvent(event);
+  if (cache && cacheKey && cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+
+  const uiEvent = {
     id: event.id,
     sourceDeviceId: event.sourceDeviceId,
     sourceIp: event.sourceIp,
@@ -70,4 +101,9 @@ export function uiHistoryEvent(event, options = {}) {
     preview: eventPreview(event),
     imagePreviewSrc: imagePreviewSrc(event, options)
   };
+
+  if (cache && cacheKey) {
+    setBoundedCache(cache, cacheKey, uiEvent);
+  }
+  return uiEvent;
 }
