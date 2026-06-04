@@ -10,10 +10,10 @@ ClipboardSync is a self-hosted LAN clipboard sharing tool. Run the Hub on a NAS,
 
 - Connect multiple macOS / Windows devices to the same Hub.
 - Copy text, links, code snippets, images, or screenshots on one device, then paste directly on another connected device.
-- Show devices by IP, with `发送` / `接收` enabled by default and configurable per device.
+- Show devices by IP, with `Send` / `Receive` enabled by default and configurable per device.
 - Keep the latest 100 history items by default and show the latest 30 in clients by default. Both values are configured on the Hub.
 - Selecting a history item pastes into the current target when possible, or writes it to the local clipboard when no input target is available.
-- Support `暂停发送`, `暂停接收`, `开机启动`, `总在最前`, and `清除全局历史`.
+- Support `Pause Sending`, `Pause Receiving`, `Launch at Login`, `Always on Top`, and `Clear Global History`.
 - Ignore local copy sources by app name, process name, or window title. Unknown copy sources can also be ignored.
 
 ## Demo Screenshots
@@ -152,12 +152,12 @@ After dragging the app into `Applications`, use `/Applications/ClipboardSync.app
 
 ## Connect the Clients
 
-In each client, open `连接` and enter the Hub address:
+In each client, open `Connection` and enter the Hub address:
 
 ```text
 http://<Hub IP>:8787
 ```
 
-If the Hub has no token, leave `令牌（可选）` empty. If the Hub has `CLIPBOARD_HUB_TOKEN`, enter the same value in the client.
+If the Hub has no token, leave `Token (optional)` empty. If the Hub has `CLIPBOARD_HUB_TOKEN`, enter the same value in the client.
 
-After saving, the client status should show `已连接`, and the shared clipboard is ready to use between connected devices.
+After saving, the client status should show `Connected`, and the shared clipboard is ready to use between connected devices.
