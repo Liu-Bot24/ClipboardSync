@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { normalize } from 'node:path';
 
 import { bootstrapConfigPaths } from '../src/client/bootstrap-paths.js';
 
@@ -15,6 +16,6 @@ test('bootstrapConfigPaths checks packaged resources, executable folder, and app
       '/Applications/ClipboardSync.app/Contents/MacOS/clipboard-sync.config.json',
       '/Applications/ClipboardSync.app/Contents/Resources/app/clipboard-sync.config.json',
       '/Applications/ClipboardSync.app/Contents/Resources/app/.client-bootstrap.json'
-    ]
+    ].map(normalize)
   );
 });

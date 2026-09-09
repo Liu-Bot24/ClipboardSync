@@ -97,7 +97,7 @@ test('HubClient connects in LAN mode without a token', () => {
 
   assert.equal(statuses.length, 0);
   assert.equal(FakeWebSocket.instances.length, 1);
-  assert.deepEqual(FakeWebSocket.instances[0].options, {});
+  assert.deepEqual(FakeWebSocket.instances[0].options, { handshakeTimeout: 10_000 });
 });
 
 test('HubClient sends receiver policy to the Hub', () => {
@@ -126,6 +126,7 @@ test('HubClient sends receiver policy to the Hub', () => {
   assert.deepEqual(messages, [
     {
       type: 'client.receiver-policy',
+      policyRevision: 1,
       policy: {
         allowedSourceDeviceIds: [],
         blockedSourceDeviceIds: ['main-pc'],
@@ -188,6 +189,7 @@ test('HubClient waits for receiver policy acknowledgement before reporting conne
   assert.deepEqual(FakeWebSocket.instances[0].messages, [
     {
       type: 'client.receiver-policy',
+      policyRevision: 1,
       policy: {
         allowedSourceDeviceIds: [],
         blockedSourceDeviceIds: ['main-pc'],
@@ -235,7 +237,7 @@ test('HubClient fetches Hub config with auth and emits it', async () => {
   assert.deepEqual(calls, [
     {
       url: 'http://127.0.0.1:8787/v1/config',
-      options: { headers: { Authorization: 'Bearer secret-token' } }
+      options: { headers: { Authorization: 'Bearer secret-token' }, signal: calls[0].options.signal }
     }
   ]);
 });
@@ -298,6 +300,7 @@ test('HubClient clears Hub history with the current auth settings', async () => 
   assert.equal(calls[0].url, 'http://127.0.0.1:8787/v1/history');
   assert.deepEqual(calls[0].options, {
     method: 'DELETE',
+    signal: calls[0].options.signal,
     headers: { Authorization: 'Bearer secret-token' }
   });
 });

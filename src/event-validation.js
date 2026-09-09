@@ -82,10 +82,14 @@ export function normalizeClipboardEvent(input, context) {
   if (decoded.length > context.maxPayloadBytes) {
     throw new ValidationError(`payload exceeds ${context.maxPayloadBytes} bytes`);
   }
+  if (input.clientEventId !== undefined && (typeof input.clientEventId !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(input.clientEventId))) {
+    throw new ValidationError('clientEventId must contain 1-128 letters, numbers, dots, underscores, or hyphens');
+  }
 
   return {
     type: 'clipboard.update',
     sourceDeviceId: context.sourceDeviceId,
+    ...(input.clientEventId === undefined ? {} : { clientEventId: input.clientEventId }),
     contentType,
     encoding,
     content,

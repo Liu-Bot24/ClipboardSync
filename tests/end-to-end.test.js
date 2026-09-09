@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { once } from 'node:events';
 
 import { imageSnapshot, textSnapshot } from '../src/client/clipboard-content.js';
 import { HubClient } from '../src/client/hub-client.js';
@@ -195,6 +196,74 @@ test('two real HubClient peers sync text and images through the Hub', async () =
   });
 });
 
+test('core session: pause, history, routing, offline copies, reconnect, clear and image sync compose correctly', { timeout: 10000 }, async () => {
+  await withServer(async (hubUrl) => {
+    const peers = await createPeers(hubUrl, ['A', 'B', 'C']); const [a, b, c] = peers;
+    const settings = (peer, patch) => { const next = { ...peer.settings, ...patch }; peer.service.updatePolicy(next); Object.assign(peer.settings, next); };
+    const copy = (peer, value) => { peer.clipboard.setText(value); return peer.service.pollLocalClipboard(); };
+    try {
+      copy(a, 'first'); await waitFor(() => peers.every((p) => p.events.some((e) => e.content === 'first')), 'first copy');
+      const first = a.events.find((e) => e.content === 'first');
+      settings(b, { pauseSend: true }); copy(b, 'paused local');
+      copy(a, 'receive while send paused');
+      await waitFor(() => b.clipboard.snapshot.content === 'receive while send paused' && c.clipboard.snapshot.content === 'receive while send paused', 'receive remains enabled');
+      const selection = b.service.beginHistoryWrite(first); assert.equal(await selection.promise, true); b.service.pollLocalClipboard();
+      assert.equal(b.clipboard.snapshot.content, 'first'); assert.equal(a.clipboard.snapshot.content, 'receive while send paused');
+      settings(b, { pauseReceive: true }); copy(a, 'receive paused');
+      await waitFor(() => b.events.some((e) => e.content === 'receive paused') && c.clipboard.snapshot.content === 'receive paused', 'paused live event to be delivered');
+      assert.equal(b.clipboard.snapshot.content, 'first');
+      settings(b, { pauseSend: false, pauseReceive: false }); copy(a, 'resumed');
+      await waitFor(() => b.clipboard.snapshot.content === 'resumed', 'receive after resume');
+      settings(a, { deviceRules: { C: { send: false } } }); copy(a, 'only B');
+      await waitFor(() => b.clipboard.snapshot.content === 'only B', 'targeted copy');
+      assert.equal(c.clipboard.snapshot.content, 'resumed');
+      assert.equal((await c.hub.fetchHistory()).some((e) => e.content === 'only B'), false);
+
+      b.hub.stop(); copy(b, 'offline old'); copy(b, 'offline latest');
+      b.hub.start(); await waitFor(() => b.hub.receiverPolicyReady, 'reconnect readiness'); b.service.pollLocalClipboard();
+      await waitFor(() => a.clipboard.snapshot.content === 'offline latest' && c.clipboard.snapshot.content === 'offline latest', 'latest offline copy');
+      const history = await b.hub.fetchHistory();
+      assert.equal(history.some((e) => ['paused local', 'offline old'].includes(e.content)), false);
+      assert.equal(history.filter((e) => e.content === 'first').length, 1, 'history selection must stay local');
+      assert.equal(history.filter((e) => e.content === 'offline latest').length, 1);
+
+      const cleared = Promise.all(peers.map((p) => once(p.hub, 'history-cleared'))); await a.hub.clearHistory(); await cleared;
+      assert.deepEqual(await a.hub.fetchHistory(), []);
+      const png = await readFile(new URL('../src/client/tray-icon.png', import.meta.url));
+      c.clipboard.setImage(png); c.service.pollLocalClipboard();
+      await waitFor(() => peers.every((p) => p.clipboard.snapshot.hash === imageSnapshot(png).hash), 'image after clear');
+      const finalHistory = await c.hub.fetchHistory();
+      assert.equal(finalHistory.length, 1); assert.equal(finalHistory[0].contentType, 'image/png');
+    } finally { peers.forEach((p) => p.stop()); }
+  });
+});
+
+test('lost sender confirmations and target reordering retry the same stored operation', { timeout: 10000 }, async () => {
+  await withServer(async (hubUrl) => {
+    const peers = await createPeers(hubUrl, ['A', 'B', 'C', 'blocked']); const [a, b, c, blocked] = peers;
+    const emit = a.hub.emit; let dropConfirmation = true; let now = 1000;
+    a.hub.emit = function(name, ...args) {
+      if (dropConfirmation && (name === 'ack' || (name === 'clipboard' && args[0]?.sourceDeviceId === 'A'))) return false;
+      return emit.call(this, name, ...args);
+    };
+    a.service.now = () => now; a.service.pendingAckMs = 100;
+    a.settings.deviceRules = { blocked: { send: false } };
+    try {
+      a.clipboard.setText('retry once'); a.service.pollLocalClipboard();
+      await waitFor(() => b.clipboard.snapshot?.content === 'retry once' && c.clipboard.snapshot?.content === 'retry once', 'first committed copy');
+      const firstId = a.service.localEvent.id;
+      a.devices.reverse(); dropConfirmation = false; now += 101;
+      const acknowledgement = once(a.hub, 'ack'); a.service.pollLocalClipboard(); await acknowledgement;
+      assert.equal(a.service.localEvent.id, firstId);
+      const history = await a.hub.fetchHistory();
+      assert.equal(history.length, 1); assert.equal(history[0].clientEventId, firstId);
+      assert.equal(b.events.filter((e) => e.content === 'retry once').length, 1);
+      assert.equal(c.events.filter((e) => e.content === 'retry once').length, 1);
+      assert.equal(blocked.clipboard.snapshot, null);
+    } finally { a.hub.emit = emit; peers.forEach((p) => p.stop()); }
+  });
+});
+
 test('send and receive rules are enforced across a three-device shared clipboard', async () => {
   await withServer(async (hubUrl) => {
     const [pc, macbook, macMini] = await createPeers(hubUrl, ['main-pc', 'macbook', 'mac-mini']);
@@ -246,7 +315,7 @@ test('send and receive rules are enforced across a three-device shared clipboard
   });
 });
 
-test('Hub suppresses same-content cross-device echoes from OS clipboard sync', async () => {
+test('Hub preserves a new same-content copy from an independently sending device', async () => {
   await withServer(async (hubUrl) => {
     const [pc, macbook, idleMac] = await createPeers(hubUrl, ['main-pc', 'macbook', 'idle-mac']);
     try {
@@ -275,7 +344,10 @@ test('Hub suppresses same-content cross-device echoes from OS clipboard sync', a
       const history = await pc.hub.fetchHistory(10);
       assert.deepEqual(
         history.map((event) => [event.sourceDeviceId, event.content]),
-        [['main-pc', 'copied once through the shared clipboard']]
+        [
+          ['main-pc', 'copied once through the shared clipboard'],
+          ['idle-mac', 'copied once through the shared clipboard']
+        ]
       );
     } finally {
       pc.stop();

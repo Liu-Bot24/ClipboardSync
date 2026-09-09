@@ -5,6 +5,9 @@ const historyEl = document.querySelector('#history');
 const historyStatusEl = document.querySelector('#historyStatus');
 const historyAlwaysOnTopEl = document.querySelector('#historyAlwaysOnTop');
 const clearHistoryEl = document.querySelector('#clearHistory');
+let lastHistoryRender = null;
+const historyNodes = new Map();
+let receivedLiveState = false;
 
 function tr(key, params) {
   return i18n?.t ? i18n.t(currentLanguage, key, params) : key;
@@ -43,6 +46,11 @@ function historyLimitLabel() {
 }
 
 function renderHistory() {
+  const renderKey = JSON.stringify([currentLanguage, currentState?.history || []]);
+  if (renderKey === lastHistoryRender) return;
+  lastHistoryRender = renderKey;
+  const currentIds = new Set((currentState?.history || []).map((event) => event.id));
+  for (const id of historyNodes.keys()) if (!currentIds.has(id)) historyNodes.delete(id);
   historyEl.replaceChildren();
   if (!currentState || currentState.history.length === 0) {
     const empty = document.createElement('div');
@@ -53,6 +61,12 @@ function renderHistory() {
   }
 
   for (const event of currentState.history) {
+    const key = JSON.stringify([currentLanguage, event]);
+    const cached = historyNodes.get(event.id);
+    if (cached?.key === key) {
+      historyEl.append(cached.button);
+      continue;
+    }
     const button = document.createElement('button');
     button.className = 'history-item';
     button.addEventListener('click', async () => {
@@ -97,6 +111,7 @@ function renderHistory() {
     }
 
     button.append(ip, preview);
+    historyNodes.set(event.id, { key, button });
     historyEl.append(button);
   }
 }
@@ -108,6 +123,7 @@ function renderSettings() {
 }
 
 window.clipboardSync.onState((state) => {
+  receivedLiveState = true;
   currentState = state;
   currentLanguage = normalizeLanguage(state.settings?.language);
   applyTranslations();
@@ -116,6 +132,7 @@ window.clipboardSync.onState((state) => {
   renderHistory();
 });
 window.clipboardSync.getState().then((state) => {
+  if (receivedLiveState) return;
   currentState = state;
   currentLanguage = normalizeLanguage(state.settings?.language);
   applyTranslations();
@@ -133,10 +150,5 @@ clearHistoryEl?.addEventListener('click', async () => {
     setHistoryStatus(tr('history.clearFailed'));
     return;
   }
-  currentState = {
-    ...(currentState || {}),
-    history: []
-  };
-  renderHistory();
   setHistoryStatus(tr('history.cleared'));
 });

@@ -1,4 +1,6 @@
 import { imageSnapshot, textSnapshot } from './clipboard-content.js';
+import { imageFingerprint } from './image-fingerprint.js';
+import { assertImageDimensions } from './image-limits.js';
 
 const IMAGE_FORMAT_PATTERNS = [
   /^image\//i,
@@ -61,10 +63,19 @@ export class ClipboardSnapshotReader {
     this.now = options.now ?? (() => Date.now());
     this.imageStablePollMs = options.imageStablePollMs ?? 1_500;
     this.lastImage = null;
+    this.lastText = null;
   }
 
   resetCache() {
     this.lastImage = null;
+    this.lastText = null;
+  }
+
+  readText(clipboard) {
+    const text = clipboard.readText();
+    if (text.length === 0) return null;
+    if (this.lastText?.content !== text) this.lastText = textSnapshot(text);
+    return this.lastText;
   }
 
   read(clipboard) {
@@ -74,7 +85,7 @@ export class ClipboardSnapshotReader {
 
     if (!shouldTryImage) {
       this.lastImage = null;
-      return readTextSnapshot(clipboard);
+      return this.readText(clipboard);
     }
 
     const key = formatsKey(formats);
@@ -83,13 +94,13 @@ export class ClipboardSnapshotReader {
     if (
       this.lastImage &&
       this.lastImage.key === key &&
-      (changeToken === undefined || this.lastImage.changeToken === changeToken) &&
+      changeToken !== undefined && this.lastImage.changeToken === changeToken &&
       now - this.lastImage.readAt < this.imageStablePollMs
     ) {
       return this.lastImage.snapshot;
     }
 
-    const snapshot = readImageSnapshot(clipboard) || readTextSnapshot(clipboard);
+    const snapshot = readImageSnapshot(clipboard, this.lastImage?.snapshot) || this.readText(clipboard);
     if (snapshot?.contentType === 'image/png') {
       this.lastImage = { key, changeToken, readAt: now, snapshot };
     } else {
@@ -99,20 +110,17 @@ export class ClipboardSnapshotReader {
   }
 }
 
-function readImageSnapshot(clipboard) {
+function readImageSnapshot(clipboard, previous) {
   const image = clipboard.readImage();
   if (!image.isEmpty()) {
-    return imageSnapshot(image.toPNG());
+    if (image.getSize) assertImageDimensions(image.getSize());
+    const pixelHash = image.toBitmap && image.getSize ? imageFingerprint(image) : undefined;
+    if (pixelHash && previous?.pixelHash === pixelHash) return previous;
+    const snapshot = imageSnapshot(image.toPNG());
+    if (pixelHash) snapshot.pixelHash = pixelHash;
+    return snapshot;
   }
   return null;
-}
-
-function readTextSnapshot(clipboard) {
-  const text = clipboard.readText();
-  if (text.length === 0) {
-    return null;
-  }
-  return textSnapshot(text);
 }
 
 export function readClipboardSnapshot(clipboard, options) {

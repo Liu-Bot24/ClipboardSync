@@ -124,6 +124,7 @@ test('GET /v1/config returns Hub client settings with auth', async () => {
     assert.equal(authenticated.status, 200);
     assert.deepEqual(await authenticated.json(), {
       type: 'hub.config',
+      receiverPolicyRevision: true,
       historyDisplayLimit: 30,
       maxHistoryEntries: 100
     });
@@ -343,7 +344,7 @@ test('WebSocket broadcasts normalized clipboard updates and echoes the stored ev
   });
 });
 
-test('WebSocket acknowledges but does not broadcast adjacent duplicate clipboard updates', async () => {
+test('WebSocket acknowledges an identical operation ID without broadcasting it twice', async () => {
   await withServer(async (httpBaseUrl, wsBaseUrl) => {
     const sender = await openSocket(wsBaseUrl, 'main-pc');
     const receiver = await openSocket(wsBaseUrl, 'macbook');
@@ -354,17 +355,18 @@ test('WebSocket acknowledges but does not broadcast adjacent duplicate clipboard
       type: 'clipboard.update',
       contentType: 'text/plain',
       encoding: 'utf8',
-      content: 'same content'
+      content: 'same content',
+      clientEventId: 'same-operation'
     };
     sender.send(JSON.stringify(payload));
     assert.equal((await senderEcho).content, 'same content');
     assert.equal((await receiverMessage).content, 'same content');
 
-    const duplicateAck = nextMessageOfType(sender, 'clipboard.update');
+    const duplicateAck = nextMessageOfType(sender, 'clipboard.ack');
     const duplicateReceiverMessage = nextMessageOfType(receiver, 'clipboard.update');
     sender.send(JSON.stringify(payload));
 
-    assert.equal((await duplicateAck).content, 'same content');
+    assert.equal((await duplicateAck).clientEventId, 'same-operation');
     const receiverResult = await Promise.race([
       duplicateReceiverMessage.then(() => 'received'),
       new Promise((resolve) => setTimeout(() => resolve('silent'), 100))

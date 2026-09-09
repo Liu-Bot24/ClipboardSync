@@ -88,7 +88,11 @@ export function parseWindowsClipboardSource(stdout) {
 }
 
 export async function readWindowsClipboardSource({ execFileImpl = execFile } = {}) {
-  const { stdout } = await execFileAsync(execFileImpl, 'powershell.exe', powershellArgs(windowsClipboardSourceScript));
+  const { stdout } = await execFileAsync(execFileImpl, 'powershell.exe', powershellArgs(windowsClipboardSourceScript), {
+    windowsHide: true,
+    timeout: 2_000,
+    maxBuffer: 64 * 1024
+  });
   return parseWindowsClipboardSource(stdout);
 }
 

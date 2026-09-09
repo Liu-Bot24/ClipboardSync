@@ -6,7 +6,7 @@ import { test } from 'node:test';
 
 import { copyAppForDmg } from '../scripts/create-mac-dmg.mjs';
 
-test('copyAppForDmg preserves relative framework symlinks', async () => {
+test('copyAppForDmg preserves relative framework symlinks', { skip: process.platform !== 'darwin' }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'clipboard-dmg-copy-'));
   const sourceApp = join(root, 'Source.app');
   const framework = join(sourceApp, 'Contents/Frameworks/Electron Framework.framework');
@@ -26,4 +26,10 @@ test('copyAppForDmg preserves relative framework symlinks', async () => {
     await readlink(join(targetApp, 'Contents/Frameworks/Electron Framework.framework/Versions/Current')),
     'A'
   );
+});
+
+test('copyAppForDmg delegates to the macOS metadata-preserving copy tool', () => {
+  const calls = [];
+  copyAppForDmg('Source.app', 'Target.app', (...args) => calls.push(args));
+  assert.deepEqual(calls, [['/usr/bin/ditto', ['Source.app', 'Target.app'], { stdio: 'inherit' }]]);
 });

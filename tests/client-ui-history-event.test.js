@@ -3,6 +3,11 @@ import { test } from 'node:test';
 
 import { uiHistoryEvent } from '../src/client/ui-history-event.js';
 
+function largePngFixture() {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP8z8AARQAFAAHeAitJAAAAAElFTkSuQmCC', 'base64');
+  return Buffer.concat([png, Buffer.alloc(17 * 1024 * 1024 - png.length)]).toString('base64');
+}
+
 test('uiHistoryEvent keeps only preview data needed by the renderer', () => {
   const event = uiHistoryEvent({
     id: 'text-1',
@@ -55,7 +60,7 @@ test('uiHistoryEvent uses native thumbnails for larger image history when availa
       sourceDeviceId: 'macbook',
       contentType: 'image/png',
       encoding: 'base64',
-      content: Buffer.alloc(17 * 1024 * 1024).toString('base64'),
+      content: largePngFixture(),
       byteLength: 17 * 1024 * 1024
     },
     {
@@ -86,7 +91,7 @@ test('uiHistoryEvent reuses cached image previews for the same history event', (
     sourceDeviceId: 'macbook',
     contentType: 'image/png',
     encoding: 'base64',
-    content: Buffer.alloc(17 * 1024 * 1024).toString('base64'),
+    content: largePngFixture(),
     byteLength: 17 * 1024 * 1024
   };
   const nativeImage = {

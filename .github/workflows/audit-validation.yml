@@ -1,0 +1,29 @@
+name: Audit validation
+on:
+  push:
+    branches: ['audit/clipboardsync-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - run: node scripts/benchmark-history.mjs
+      - if: runner.os != 'Linux'
+        run: npm rebuild electron
+      - if: runner.os != 'Linux'
+        run: npx --no-install electron scripts/verify-native-images.mjs --system-clipboard
+      - if: runner.os != 'Windows'
+        run: cc -Wall -Wextra -Werror -fsyntax-only scripts/local-hub-proxy.c

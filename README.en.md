@@ -16,7 +16,19 @@ ClipboardSync is a self-hosted LAN clipboard sharing tool. Run the Hub on a NAS,
 - Keep the latest 100 history items by default and show the latest 30 in clients by default. Both values are configured on the Hub.
 - Selecting a history item pastes into the current target when possible, or writes it to the local clipboard when no input target is available.
 - Support `Pause Sending`, `Pause Receiving`, `Launch at Login`, `Always on Top`, and `Clear Global History`.
-- Ignore local copy sources by app name, process name, or window title. Unknown copy sources can also be ignored.
+- On Windows, ignore local copy sources by app name, process name, or window title, including unknown sources. Source detection and filtering are currently unavailable on macOS.
+
+### Synchronization and retention limits
+
+New clients retry with a stable operation ID. Independent copies with identical content remain distinct. Upgrade the Hub and clients together: an older Hub may still deduplicate by content. `CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS` remains accepted for configuration compatibility but is no longer used by the new Hub to discard independent copies.
+
+Pause, stop, connection changes and newer history selections invalidate obsolete writes. Automatic paste waits for the corresponding write confirmation. On Windows, failed activation or a final foreground-window mismatch cancels automatic paste while retaining the clipboard content.
+
+Images are limited to 32 MiB encoded, 64 × 1024 × 1024 pixels and 32768 pixels per edge. This bounds one RGBA image to approximately 256 MiB, not total process memory. Images exceeding the budget are rejected before client native decoding or thumbnail generation.
+
+The history byte budget counts complete JSONL records, including Base64 and metadata. A record exceeding `CLIPBOARD_HUB_MAX_HISTORY_BYTES` is rejected explicitly. Count and age limits apply immediately to queries; file compaction runs at thresholds or on the approximately 60-second maintenance interval. `/health` exposes `historyMaintenance` failures. Committed events can still synchronize, while subsequent new events receive an error until storage recovers. Retained history remains available after reconnecting.
+
+Device IDs and a shared token provide routing among trusted devices, not individual device authentication. HTTP transport and JSONL history do not encrypt clipboard content. Use HTTPS or a trusted tunnel across untrusted networks and restrict access to the history directory.
 
 ## Demo Screenshots
 

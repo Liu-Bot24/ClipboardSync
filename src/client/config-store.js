@@ -84,6 +84,8 @@ export class ConfigStore {
     this.bootstrapPaths = options.bootstrapPaths || [];
     this.settings = defaultClientSettings(options.env);
     this.createdOnLoad = false;
+    this.saveQueue = Promise.resolve();
+    this.persistedContent = null;
   }
 
   async load() {
@@ -196,8 +198,17 @@ export class ConfigStore {
   }
 
   async save() {
-    await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(this.path, `${JSON.stringify(this.settings, null, 2)}\n`, { mode: 0o600 });
-    await chmod(this.path, 0o600);
+    const content = `${JSON.stringify(this.settings, null, 2)}\n`;
+    const operation = this.saveQueue.then(async () => {
+      if (content === this.persistedContent) return;
+      await mkdir(dirname(this.path), { recursive: true });
+      const tempPath = `${this.path}.tmp`;
+      await writeFile(tempPath, content, { mode: 0o600 });
+      await chmod(tempPath, 0o600);
+      await rename(tempPath, this.path);
+      this.persistedContent = content;
+    });
+    this.saveQueue = operation.catch(() => {});
+    return operation;
   }
 }

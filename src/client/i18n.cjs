@@ -53,6 +53,7 @@
       ignore: {
         section: '忽略',
         unknownSource: '忽略未知复制来源',
+        unsupported: '当前平台暂不支持识别复制来源，来源筛选不会生效。',
         recentSources: '最近复制来源',
         noRecentSources: '暂无最近复制来源',
         rules: '规则',
@@ -128,6 +129,7 @@
       ignore: {
         section: 'Ignore',
         unknownSource: 'Ignore Unknown Copy Sources',
+        unsupported: 'Copy source detection is not available on this platform. Source filters are inactive.',
         recentSources: 'Recent Copy Sources',
         noRecentSources: 'No recent copy sources',
         rules: 'Rules',

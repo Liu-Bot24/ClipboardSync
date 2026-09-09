@@ -80,12 +80,20 @@ using System.Runtime.InteropServices;
 public static class ClipboardSyncPasteNative {
   [DllImport("user32.dll")]
   public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int processId);
 }
 "@
 Add-Type -AssemblyName System.Windows.Forms
 $hwnd = [IntPtr]${Math.trunc(target.hwnd)}
-[ClipboardSyncPasteNative]::SetForegroundWindow($hwnd) | Out-Null
+if (-not [ClipboardSyncPasteNative]::SetForegroundWindow($hwnd)) { exit 2 }
 Start-Sleep -Milliseconds 140
+$foreground = [ClipboardSyncPasteNative]::GetForegroundWindow()
+$targetProcessId = 0
+[ClipboardSyncPasteNative]::GetWindowThreadProcessId($foreground, [ref]$targetProcessId) | Out-Null
+if ($foreground -ne $hwnd -or $targetProcessId -ne ${Math.trunc(target.pid)}) { exit 3 }
 [System.Windows.Forms.SendKeys]::SendWait('^v')
 `;
 }
@@ -296,13 +304,14 @@ export async function readMacForegroundTarget({ execFileImpl = execFile } = {}) 
   return parseMacForegroundTarget(stdout);
 }
 
-export async function pasteIntoWindowsTarget(target, { execFileImpl = execFile, ownPid = process.pid, onError = () => {} } = {}) {
+export async function pasteIntoWindowsTarget(target, { execFileImpl = execFile, ownPid = process.pid, onError = () => {}, signal } = {}) {
   if (!isUsablePasteTarget(target, ownPid)) {
     return false;
   }
   try {
     await execFileAsync(execFileImpl, 'powershell.exe', powershellArgs(pasteScriptForTarget(target)), {
       windowsHide: true,
+      signal,
       timeout: 4_000
     });
     return true;
@@ -312,17 +321,18 @@ export async function pasteIntoWindowsTarget(target, { execFileImpl = execFile, 
   }
 }
 
-export async function pasteIntoMacTarget(target, { execFileImpl = execFile, ownPid = process.pid, onError = () => {} } = {}) {
+export async function pasteIntoMacTarget(target, { execFileImpl = execFile, ownPid = process.pid, onError = () => {}, signal } = {}) {
   if (!isUsablePasteTarget(target, ownPid)) {
     return false;
   }
   try {
     const helper = macPasteHelperPath();
     if (helper) {
-      await execFileAsync(execFileImpl, helper, macPasteHelperArgs(target), { timeout: 12_000 });
+      await execFileAsync(execFileImpl, helper, macPasteHelperArgs(target), { timeout: 12_000, signal });
     } else {
       await execFileAsync(execFileImpl, '/usr/bin/osascript', osascriptArgs(macPasteScriptForTarget(target)), {
-        timeout: 4_000
+        timeout: 4_000,
+        signal
       });
     }
     return true;

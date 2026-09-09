@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { EventEmitter } from 'node:events';
+import { join } from 'node:path';
 
 import {
   hubSettingsForMacProxy,
@@ -28,16 +30,10 @@ test('hubSettingsForMacProxy keeps UI settings but routes Hub calls to the local
 test('MacLocalProxyManager writes runtime proxy config and returns local Hub settings', async () => {
   const writes = [];
   const spawned = [];
-  const child = {
-    exitCode: null,
-    killCalled: false,
-    kill() {
-      this.killCalled = true;
-      this.exitCode = 0;
-    },
-    once() {},
-    unref() {}
-  };
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.exitCode = null;
+  child.kill = () => { child.killCalled = true; child.exitCode = 0; child.emit('exit', 0); };
   const manager = new MacLocalProxyManager({
     resourcesPath: '/Applications/ClipboardSync.app/Contents/Resources',
     userDataPath: '/tmp/clipboard-sync-user-data',
@@ -46,6 +42,7 @@ test('MacLocalProxyManager writes runtime proxy config and returns local Hub set
     writeFileImpl: async (path, content, options) => writes.push({ path, content, options }),
     spawnImpl: (path, args, options) => {
       spawned.push({ path, args, options });
+      setImmediate(() => child.stdout.emit('data', Buffer.from('clipboard local proxy listening on 127.0.0.1:18787')));
       return child;
     },
     env: { PATH: '/usr/bin' }
@@ -54,9 +51,9 @@ test('MacLocalProxyManager writes runtime proxy config and returns local Hub set
   const settings = await manager.sync({ hubUrl: '192.0.2.10:8787', token: '', deviceId: 'macbook' });
 
   assert.equal(settings.hubUrl, MAC_LOCAL_PROXY_HUB_URL);
-  assert.equal(spawned[0].path, '/Applications/ClipboardSync.app/Contents/Resources/local-hub-proxy');
+  assert.equal(spawned[0].path, join('/Applications/ClipboardSync.app/Contents/Resources', 'local-hub-proxy'));
   assert.equal(JSON.parse(writes[0].content).targetUrl, 'http://192.0.2.10:8787');
-  assert.equal(spawned[0].options.env.CLIPBOARD_SYNC_PROXY_CONFIG, '/tmp/clipboard-sync-user-data/clipboard-sync.proxy.json');
+  assert.equal(spawned[0].options.env.CLIPBOARD_SYNC_PROXY_CONFIG, join('/tmp/clipboard-sync-user-data', 'clipboard-sync.proxy.json'));
   manager.stop();
   assert.equal(child.killCalled, true);
 });

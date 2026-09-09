@@ -65,7 +65,7 @@ test('buildReleaseManifest records package metadata without leaking the packaged
   }
 });
 
-test('writeReleaseFiles tightens private package and checksum permissions', async () => {
+test('writeReleaseFiles tightens POSIX private package and checksum permissions', { skip: process.platform === 'win32' }, async () => {
   const root = await mkdtemp(join(os.tmpdir(), 'clipboard-release-files-'));
 
   try {

@@ -516,6 +516,7 @@ test('ClipboardSyncService suppresses remote images after platform re-encodes th
   const hub = fakeHub();
   const service = new ClipboardSyncService({
     clipboard: {
+      prepareWrite(event) { return { write: () => this.writeEvent(event), matches: (actual) => actual?.hash === 'actual-image-hash' }; },
       readSnapshot: () => snapshot,
       writeEvent: (event) => {
         written.push(event);
@@ -648,6 +649,7 @@ test('ClipboardSyncService retries transient remote clipboard write failures', (
   const hub = fakeHub();
   const service = new ClipboardSyncService({
     clipboard: {
+      prepareWrite(event) { return { write: () => this.writeEvent(event), matches: (actual) => actual?.hash === 'actual-image-hash' }; },
       readSnapshot: () => snapshot,
       writeEvent: () => {
         attempts += 1;
@@ -699,6 +701,7 @@ test('ClipboardSyncService retries remote image writes until they are observable
   const hub = fakeHub();
   const service = new ClipboardSyncService({
     clipboard: {
+      prepareWrite(event) { return { write: () => this.writeEvent(event), matches: (actual) => actual?.hash === 'actual-image-hash' }; },
       readSnapshot: () => snapshot,
       writeEvent: () => {
         attempts += 1;

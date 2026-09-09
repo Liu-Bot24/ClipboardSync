@@ -26,6 +26,7 @@ import { MacLocalProxyManager } from './mac-local-proxy.js';
 import { ClipboardLoopGuard } from './loop-guard.js';
 import { menuSafeLabel } from './menu-labels.js';
 import { nextPasteTargetMemory, pasteTargetMemoryAction } from './paste-target-memory.js';
+import { HistoryRefreshController, SingleFlightSampler } from './async-state.js';
 import { filterVisibleHistory, mergeDeviceRules, mergeDeviceRulesByIp, updateDeviceRule } from './policy.js';
 import { applyQaThemeSource } from './qa-theme.js';
 import { normalizeHubUrl } from './settings-validation.js';
@@ -73,6 +74,8 @@ let hub;
 let syncService;
 let devices = [];
 let history = [];
+const historyRefresh = new HistoryRefreshController();
+const pasteTargetCapture = new SingleFlightSampler();
 let status = { state: 'starting' };
 let recentSources = [];
 let qaFixtureMode = false;
@@ -80,6 +83,8 @@ let lastExternalPasteTarget = null;
 let pasteTargetSampler = null;
 let macLocalProxy = null;
 let hubConnectionSettings = null;
+let connectionChangeRevision = 0;
+let connectionSettingsRevision = 0;
 const uiHistoryEventCache = new Map();
 const historyMenuIconCache = new Map();
 const uiLifecycle = createUiLifecycle();
@@ -128,6 +133,7 @@ function stateForUi() {
       hasToken: Boolean(settings.token),
       historyDisplayLimit
     },
+    capabilities: { clipboardSource: isWindows },
     devices,
     recentSources,
     history: uiHistoryForSettings(settings)
@@ -135,14 +141,18 @@ function stateForUi() {
 }
 
 async function syncHubConnectionSettings() {
+  const revision = ++connectionSettingsRevision;
   const settings = configStore.get();
   if (!macLocalProxy) {
     hubConnectionSettings = settings;
     return settings;
   }
   try {
-    hubConnectionSettings = await macLocalProxy.sync(settings);
+    const connectedSettings = await macLocalProxy.sync(settings);
+    if (revision !== connectionSettingsRevision) return null;
+    hubConnectionSettings = connectedSettings;
   } catch (error) {
+    if (revision !== connectionSettingsRevision) return null;
     smokeTrace({ stage: 'mac-local-proxy-error', message: error.message });
     hubConnectionSettings = settings;
   }
@@ -152,6 +162,9 @@ async function syncHubConnectionSettings() {
 function currentHubSettings() {
   const settings = configStore.get();
   if (!hubConnectionSettings) {
+    return settings;
+  }
+  if (macLocalProxy && !macLocalProxy.proxy.isActive()) {
     return settings;
   }
   return {
@@ -190,21 +203,31 @@ async function refreshHistory() {
     return;
   }
   try {
-    history = await hub.fetchHistory(normalizeHistoryDisplayLimit(configStore.get().historyDisplayLimit));
-    broadcastState();
+    await historyRefresh.refresh(
+      () => hub.fetchHistory(normalizeHistoryDisplayLimit(configStore.get().historyDisplayLimit)),
+      (events) => { history = events; broadcastState(); },
+      { retryOnStale: true, onError: (error) => smokeTrace({ stage: 'history-refresh-error', message: error.message }) }
+    );
   } catch {
     // Status is already represented by the websocket state; history refresh can fail transiently.
   }
 }
 
 async function clearHistory() {
+  historyRefresh.invalidate();
+  const revision = historyRefresh.revision;
   try {
     if (!qaFixtureMode) {
       await hub.clearHistory();
     }
-    history = [];
-    clearHistoryRenderCaches();
-    broadcastState();
+    if (historyRefresh.revision === revision) {
+      history = [];
+      historyRefresh.invalidate();
+      clearHistoryRenderCaches();
+      broadcastState();
+    } else {
+      await refreshHistory();
+    }
     return { cleared: true };
   } catch (error) {
     setStatus({ state: 'hub-error', message: error.message });
@@ -281,26 +304,13 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForClipboardEvent(event, { timeoutMs = 1_500, intervalMs = 60 } = {}) {
-  const hash = hashEventPayload(event);
-  const deadline = Date.now() + timeoutMs;
-  do {
-    const actual = syncService.readSnapshot();
-    if (actual.ok && syncService.clipboardContainsEvent(event, hash, actual.snapshot)) {
-      return true;
-    }
-    await wait(intervalMs);
-  } while (Date.now() < deadline);
-  return false;
-}
-
 async function captureExternalPasteTarget() {
   if (!isWindows && !isMac) {
     return null;
   }
   const reader = isWindows ? readWindowsForegroundTarget : readMacForegroundTarget;
   try {
-    const target = await reader();
+    return await pasteTargetCapture.sample(reader, (target) => {
     const action = pasteTargetMemoryAction(target, { isMac, isWindows, ownPid: process.pid });
     lastExternalPasteTarget = nextPasteTargetMemory(lastExternalPasteTarget, target, { isMac, isWindows, ownPid: process.pid });
     smokeTrace({
@@ -310,6 +320,7 @@ async function captureExternalPasteTarget() {
       remembered: pasteTargetTrace(lastExternalPasteTarget)
     });
     return action === 'update' ? lastExternalPasteTarget : null;
+    });
   } catch (error) {
     smokeTrace({ stage: 'paste-target-capture-error', message: error.message });
     return null;
@@ -331,6 +342,7 @@ function startPasteTargetSampler() {
 }
 
 function stopPasteTargetSampler() {
+  pasteTargetCapture.invalidate();
   clearInterval(pasteTargetSampler);
   pasteTargetSampler = null;
 }
@@ -607,16 +619,40 @@ async function updateSettings(patch) {
       : String(normalizedPatch.ignoredSourcePatterns || '').split(/\r?\n/);
   }
 
-  const settings = await configStore.update(normalizedPatch);
+  const changesSyncPolicy = ['pauseSend', 'pauseReceive', 'deviceRules', 'deviceRulesByIp',
+    'ignoreUnknownSource', 'ignoredSourcePatterns', 'maxSendBytes', 'hubUrl', 'token', 'deviceId', 'deviceName']
+    .some((key) => key in normalizedPatch);
+  if (changesSyncPolicy) syncService?.updatePolicy({ ...configStore.get(), ...normalizedPatch });
+  historyRefresh.invalidate();
+  const connectionChanged = ['token', 'hubUrl', 'deviceId', 'deviceName'].some((key) => key in normalizedPatch);
+  const revision = connectionChanged ? ++connectionChangeRevision : connectionChangeRevision;
+  if (connectionChanged) {
+    historyRefresh.setEnabled(false);
+    hub.stop();
+    syncService?.stop();
+    history = [];
+    clearHistoryRenderCaches();
+    broadcastState();
+  }
+  let settings;
+  try {
+    settings = await configStore.update(normalizedPatch);
+  } catch (error) {
+    setStatus({ state: 'config-error', message: error.message });
+    return stateForUi();
+  }
   if ('historyAlwaysOnTop' in normalizedPatch) {
     applyHistoryAlwaysOnTop();
   }
   applyLoginItemSettings(settings);
   hub.sendReceiverPolicy(settings);
   broadcastState();
-  if ('token' in normalizedPatch || 'hubUrl' in normalizedPatch || 'deviceId' in normalizedPatch || 'deviceName' in normalizedPatch) {
-    await syncHubConnectionSettings();
-    hub.reconnectNow();
+  if (connectionChanged && revision === connectionChangeRevision) {
+    const connectedSettings = await syncHubConnectionSettings();
+    if (connectedSettings && revision === connectionChangeRevision) {
+      hub.start();
+      syncService?.start();
+    }
   }
   return stateForUi();
 }
@@ -635,8 +671,10 @@ async function applyHistory(eventId, { paste = false } = {}) {
   const event = historyEventForSelection(history, settings, eventId, normalizeHistoryDisplayLimit(settings.historyDisplayLimit));
   if (event) {
     const hash = hashEventPayload(event);
-    const wroteImmediately = syncService.applyHistoryEvent(event);
-    const clipboardReady = wroteImmediately || (paste ? await waitForClipboardEvent(event) : false);
+    const operation = syncService.beginHistoryWrite(event);
+    const wroteImmediately = operation.status === 'succeeded';
+    const clipboardReady = await operation.promise;
+    const mayPaste = () => clipboardReady && syncService.isWriteCurrent(operation, { confirm: true });
     smokeTrace({
       stage: 'history-clipboard-ready',
       ready: clipboardReady,
@@ -646,13 +684,14 @@ async function applyHistory(eventId, { paste = false } = {}) {
       hash
     });
     if (paste && (isWindows || isMac) && isRecentPasteTarget(lastExternalPasteTarget)) {
-      if (!clipboardReady) {
-        return { applied: true, pasted: false };
+      if (!mayPaste()) {
+        return { applied: clipboardReady, pasted: false };
       }
       smokeTrace({ stage: 'history-paste-attempt', target: pasteTargetTrace(lastExternalPasteTarget) });
       let pasteError = null;
       const pasted = isWindows
         ? await pasteIntoWindowsTarget(lastExternalPasteTarget, {
+            signal: operation.controller.signal,
             ownPid: process.pid,
             onError: (error) => {
               pasteError = error;
@@ -660,6 +699,7 @@ async function applyHistory(eventId, { paste = false } = {}) {
             }
           })
         : await pasteIntoMacTarget(lastExternalPasteTarget, {
+            signal: operation.controller.signal,
             ownPid: process.pid,
             onError: (error) => {
               pasteError = error;
@@ -675,15 +715,16 @@ async function applyHistory(eventId, { paste = false } = {}) {
       }
     }
     if (paste && (isWindows || isMac)) {
-      if (!clipboardReady) {
-        return { applied: true, pasted: false };
+      if (!mayPaste()) {
+        return { applied: clipboardReady, pasted: false };
       }
       const pasteTarget = await captureExternalPasteTarget();
-      if (isRecentPasteTarget(pasteTarget)) {
+      if (isRecentPasteTarget(pasteTarget) && mayPaste()) {
         smokeTrace({ stage: 'history-paste-attempt', fallback: true, target: pasteTargetTrace(pasteTarget) });
         let pasteError = null;
         const pasted = isWindows
           ? await pasteIntoWindowsTarget(pasteTarget, {
+              signal: operation.controller.signal,
               ownPid: process.pid,
               onError: (error) => {
                 pasteError = error;
@@ -691,6 +732,7 @@ async function applyHistory(eventId, { paste = false } = {}) {
               }
             })
           : await pasteIntoMacTarget(pasteTarget, {
+              signal: operation.controller.signal,
               ownPid: process.pid,
               onError: (error) => {
                 pasteError = error;
@@ -706,7 +748,7 @@ async function applyHistory(eventId, { paste = false } = {}) {
         }
       }
     }
-    return { applied: true, pasted: false };
+    return { applied: clipboardReady, pasted: false };
   }
   return { applied: false, pasted: false };
 }
@@ -798,6 +840,9 @@ async function main() {
 
   hub = new HubClient(() => currentHubSettings());
   hub.on('status', (nextStatus) => {
+    if (nextStatus.state === 'connected') historyRefresh.setEnabled(true);
+    else if (['disconnected', 'connection-error', 'invalid-hub-url', 'duplicate-device'].includes(nextStatus.state)) historyRefresh.setEnabled(false);
+    historyRefresh.invalidate();
     smokeTrace({
       stage: 'hub-status',
       state: nextStatus.state,
@@ -809,29 +854,35 @@ async function main() {
     }
   });
   hub.on('devices', async (nextDevices) => {
-    smokeTrace({
-      stage: 'hub-devices',
-      count: nextDevices.length,
-      ownPresent: nextDevices.some((device) => device.deviceId === configStore.get().deviceId)
-    });
-    devices = nextDevices;
-    const settings = configStore.get();
-    await configStore.update({
-      deviceRules: mergeDeviceRules(settings.deviceRules, settings.deviceRulesByIp, devices),
-      deviceRulesByIp: mergeDeviceRulesByIp(settings.deviceRulesByIp, devices, settings.deviceRules)
-    });
-    hub.sendReceiverPolicy(currentHubSettings());
-    broadcastState();
+    try {
+      smokeTrace({
+        stage: 'hub-devices',
+        count: nextDevices.length,
+        ownPresent: nextDevices.some((device) => device.deviceId === configStore.get().deviceId)
+      });
+      devices = nextDevices;
+      const settings = configStore.get();
+      await configStore.update({
+        deviceRules: mergeDeviceRules(settings.deviceRules, settings.deviceRulesByIp, devices),
+        deviceRulesByIp: mergeDeviceRulesByIp(settings.deviceRulesByIp, devices, settings.deviceRules)
+      });
+      hub.sendReceiverPolicy(currentHubSettings());
+      broadcastState();
+    } catch (error) { setStatus({ state: 'config-error', message: error.message }); }
   });
   hub.on('config', async (nextConfig) => {
-    if (nextConfig?.historyDisplayLimit) {
-      await configStore.update({ historyDisplayLimit: nextConfig.historyDisplayLimit });
-      await refreshHistory();
-      return;
-    }
-    broadcastState();
+    try {
+      if (nextConfig?.historyDisplayLimit) {
+        await configStore.update({ historyDisplayLimit: nextConfig.historyDisplayLimit });
+        await refreshHistory();
+        return;
+      }
+      broadcastState();
+    } catch (error) { setStatus({ state: 'config-error', message: error.message }); }
   });
   hub.on('clipboard', (event) => {
+    if (typeof event.id !== 'string' || !event.id) return;
+    historyRefresh.invalidate();
     smokeTrace({
       stage: 'hub-clipboard',
       contentType: event.contentType,
@@ -839,11 +890,12 @@ async function main() {
       targetDeviceIds: event.targetDeviceIds,
       hash: event.sha256
     });
-    history.push(event);
+    if (!history.some((entry) => entry.id === event.id)) history.push(event);
     history = filterVisibleHistory(history, configStore.get(), normalizeHistoryDisplayLimit(configStore.get().historyDisplayLimit)).reverse();
     broadcastState();
   });
   hub.on('history-cleared', () => {
+    historyRefresh.invalidate();
     history = [];
     clearHistoryRenderCaches();
     broadcastState();
@@ -853,7 +905,7 @@ async function main() {
   syncService = new ClipboardSyncService({
     clipboard: new ElectronClipboardAdapter(),
     hub,
-    settingsProvider: () => configStore.get(),
+    settingsProvider: () => ({ ...configStore.get(), ...(isWindows ? {} : { ignoreUnknownSource: false, ignoredSourcePatterns: [] }) }),
     devicesProvider: () => devices,
     loopGuard: new ClipboardLoopGuard(),
     onError: (error) => {
@@ -861,7 +913,7 @@ async function main() {
       setStatus({ state: 'clipboard-error', message: error.message });
     },
     onTrace: smokeTrace,
-    onSourceObserved: rememberClipboardSource,
+    onSourceObserved: isWindows ? rememberClipboardSource : null,
     sourceProvider: () => readClipboardSource({ platform: process.platform })
   });
 
@@ -1011,6 +1063,7 @@ app.on('window-all-closed', (event) => {
 
 app.on('before-quit', () => {
   uiLifecycle.beginQuit();
+  historyRefresh.setEnabled(false);
   syncService?.stop();
   stopPasteTargetSampler();
   hub?.removeAllListeners();

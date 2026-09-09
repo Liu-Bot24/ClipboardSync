@@ -221,7 +221,7 @@ test('ConfigStore keeps user-selected direct Hub settings for public packages', 
   });
 });
 
-test('ConfigStore tightens permissions on an existing token config file', async () => {
+test('ConfigStore tightens POSIX permissions on an existing token config file', { skip: process.platform === 'win32' }, async () => {
   await withTempConfig(async (dir) => {
     const configPath = join(dir, 'config.json');
     await writeFile(configPath, JSON.stringify({ token: 'saved-token', hubUrl: 'http://hub' }));
@@ -260,6 +260,6 @@ test('ConfigStore backs up a corrupt user config and keeps the client bootable',
     assert.equal(settings.autoLaunch, true);
     assert.equal(JSON.parse(await readFile(configPath, 'utf8')).token, 'bootstrap-token');
     assert.ok(backupFile);
-    assert.equal((await stat(join(dir, backupFile))).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal((await stat(join(dir, backupFile))).mode & 0o777, 0o600);
   });
 });

@@ -13,6 +13,10 @@ export class ClipboardLoopGuard {
     }
   }
 
+  reset() {
+    this.applied.clear();
+  }
+
   markApplied(hash) {
     const now = this.now();
     this.pruneExpired(now);

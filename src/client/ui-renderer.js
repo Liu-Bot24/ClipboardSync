@@ -210,6 +210,12 @@ function render(state) {
   tokenEl.placeholder = state.settings.hasToken ? tr('connection.tokenConfigured') : tr('connection.tokenEmpty');
   ignoreUnknownSourceEl.checked = Boolean(state.settings.ignoreUnknownSource);
   ignoredSourcePatternsEl.value = (state.settings.ignoredSourcePatterns || []).join('\n');
+  const sourceSupported = state.capabilities?.clipboardSource !== false;
+  ignoreUnknownSourceEl.disabled = !sourceSupported;
+  ignoredSourcePatternsEl.disabled = !sourceSupported;
+  document.querySelector('#saveIgnore').disabled = !sourceSupported;
+  const sourceCapabilityEl = document.querySelector('#sourceCapability');
+  if (sourceCapabilityEl) sourceCapabilityEl.textContent = sourceSupported ? '' : tr('ignore.unsupported');
   if (!state.settings.hubUrl) {
     connectionEl.open = true;
   }
@@ -242,5 +248,6 @@ saveIgnoreEl.addEventListener('click', () => {
 document.querySelector('#refresh').addEventListener('click', () => window.clipboardSync.refresh());
 document.querySelector('#quit').addEventListener('click', () => window.clipboardSync.quit());
 
-window.clipboardSync.onState(render);
-window.clipboardSync.getState().then(render);
+let receivedLiveState = false;
+window.clipboardSync.onState((state) => { receivedLiveState = true; render(state); });
+window.clipboardSync.getState().then((state) => { if (!receivedLiveState) render(state); });

@@ -62,6 +62,7 @@ function normalizeRemoteIp(address = '') {
 function hubConfigPayload(config) {
   return {
     type: 'hub.config',
+    receiverPolicyRevision: true,
     historyDisplayLimit: config.historyDisplayLimit,
     maxHistoryEntries: config.maxHistoryEntries
   };
@@ -91,12 +92,17 @@ export function maxWebSocketMessageBytes(maxPayloadBytes) {
   return Math.ceil(maxPayloadBytes * 1.5) + 65_536;
 }
 
-export function sendSocketJson(ws, body) {
+export function sendSocketJson(ws, body, maxBufferedBytes = 64 * 1024 * 1024) {
   if (ws.readyState !== ws.OPEN) {
     return false;
   }
   try {
-    ws.send(JSON.stringify(body));
+    const serialized = typeof body === 'string' ? body : JSON.stringify(body);
+    if ((ws.bufferedAmount || 0) + Buffer.byteLength(serialized) > maxBufferedBytes) {
+      ws.terminate?.();
+      return false;
+    }
+    ws.send(serialized);
     return true;
   } catch {
     return false;
@@ -109,18 +115,29 @@ export async function createClipboardHubServer(config) {
     historyDisplayLimit: 30,
     maxPayloadBytes: 33_554_432,
     duplicateContentWindowMs: 30_000,
+    maxQueuedEntries: 256,
+    maxQueuedBytes: 128 * 1024 * 1024,
+    heartbeatMs: 30_000,
+    maintenanceMs: 60_000,
+    maxControlMessageBytes: 128 * 1024,
+    maxControlMessagesPerSecond: 8,
     ...config
   };
   const store = new EventStore(config.historyPath, {
     maxHistoryEntries: config.maxHistoryEntries,
     maxHistoryBytes: config.maxHistoryBytes,
     maxHistoryAgeMs: config.maxHistoryAgeMs,
-    duplicateContentWindowMs: config.duplicateContentWindowMs
+    maxQueuedEntries: config.maxQueuedEntries,
+    maxQueuedBytes: config.maxQueuedBytes
   });
   const clients = new Map();
   const clientsByDeviceId = new Map();
   const receiverPoliciesByDeviceId = new Map();
   const wss = new WebSocketServer({ noServer: true, maxPayload: maxWebSocketMessageBytes(config.maxPayloadBytes) });
+  let heartbeat = null;
+  let maintenance = null;
+  let queuedBytes = 0;
+  let queuedEntries = 0;
 
   function currentDevices() {
     return [...clients.values()].map((client) => ({
@@ -132,8 +149,9 @@ export async function createClipboardHubServer(config) {
   }
 
   function broadcastDevices() {
+    const message = JSON.stringify({ type: 'hub.devices', devices: currentDevices() });
     for (const peer of clients.keys()) {
-      sendSocketJson(peer, { type: 'hub.devices', devices: currentDevices() });
+      sendSocketJson(peer, message);
     }
   }
 
@@ -149,13 +167,18 @@ export async function createClipboardHubServer(config) {
   }
 
   const server = http.createServer((request, response) => {
-    const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+    let url;
+    try { url = new URL(request.url, 'http://localhost'); } catch {
+      sendJson(response, 400, { error: 'invalid request URL' });
+      return;
+    }
 
     if (request.method === 'GET' && url.pathname === '/health') {
       sendJson(response, 200, {
         status: 'ok',
         service: 'clipboard-hub',
-        connections: clients.size
+        connections: clients.size,
+        historyMaintenance: store.maintenanceError ? 'failed' : 'ok'
       });
       return;
     }
@@ -213,7 +236,12 @@ export async function createClipboardHubServer(config) {
   });
 
   server.on('upgrade', (request, socket, head) => {
-    const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+    socket.on('error', () => socket.destroy());
+    let url;
+    try { url = new URL(request.url, 'http://localhost'); } catch {
+      socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+      return;
+    }
     if (url.pathname !== '/v1/ws') {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
       socket.destroy();
@@ -240,6 +268,9 @@ export async function createClipboardHubServer(config) {
   });
 
   wss.on('connection', (ws, _request, clientInfo) => {
+    ws.on('error', () => ws.terminate());
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
     const existing = clientsByDeviceId.get(clientInfo.deviceId);
     if (existing && existing !== ws) {
       clients.delete(existing);
@@ -250,21 +281,59 @@ export async function createClipboardHubServer(config) {
     clientsByDeviceId.set(clientInfo.deviceId, ws);
     sendSocketJson(ws, hubConfigPayload(config));
     broadcastDevices();
+    let controlWindowStarted = Date.now();
+    let controlMessages = 0;
+
+    function applyReceiverPolicy(input) {
+      const senderInfo = clients.get(ws);
+      if (!senderInfo) return;
+      if (input.policyRevision !== undefined && (!Number.isSafeInteger(input.policyRevision) || input.policyRevision < 1)) {
+        sendSocketJson(ws, { type: 'error', message: 'invalid receiver policy revision' });
+        return;
+      }
+      const now = Date.now();
+      if (now - controlWindowStarted >= 1000) {
+        controlWindowStarted = now;
+        controlMessages = 0;
+      }
+      if (controlMessages++ >= config.maxControlMessagesPerSecond) {
+        sendSocketJson(ws, { type: 'error', code: 'control-rate-limited', message: 'receiver policy rate limit; retry later' });
+        return;
+      }
+      const receiverPolicy = normalizeReceiverPolicy(input.policy);
+      clients.set(ws, { ...senderInfo, receiverPolicy });
+      receiverPoliciesByDeviceId.set(senderInfo.deviceId, receiverPolicy);
+      sendSocketJson(ws, { type: 'hub.receiver-policy-updated', policyRevision: input.policyRevision });
+    }
 
     ws.on('message', async (data) => {
+      const bytes = data.length;
+      let input;
+      // Reserve a small synchronous control budget independently of disk-backed work.
+      if (bytes <= config.maxControlMessageBytes) {
+        try {
+          input = JSON.parse(data.toString());
+          if (input?.type === 'client.receiver-policy') {
+            applyReceiverPolicy(input);
+            return;
+          }
+        } catch (error) {
+          sendSocketJson(ws, { type: 'error', message: error instanceof SyntaxError ? error.message : 'invalid receiver policy' });
+          return;
+        }
+      }
+      if (queuedEntries >= config.maxQueuedEntries || queuedBytes + bytes > config.maxQueuedBytes) {
+        sendSocketJson(ws, { type: 'error', message: 'history queue is full; retry later' });
+        return;
+      }
+      queuedEntries += 1;
+      queuedBytes += bytes;
       try {
         const senderInfo = clients.get(ws);
-        const input = JSON.parse(data.toString());
+        if (!senderInfo) return;
+        input ??= JSON.parse(data.toString());
         if (input?.type === 'client.receiver-policy') {
-          const receiverPolicy = normalizeReceiverPolicy(input.policy);
-          clients.set(ws, {
-            ...senderInfo,
-            receiverPolicy
-          });
-          if (senderInfo?.deviceId) {
-            receiverPoliciesByDeviceId.set(senderInfo.deviceId, receiverPolicy);
-          }
-          sendSocketJson(ws, { type: 'hub.receiver-policy-updated' });
+          sendSocketJson(ws, { type: 'error', message: 'receiver policy exceeds the control message byte limit' });
           return;
         }
         const normalized = normalizeClipboardEvent(input, {
@@ -273,10 +342,11 @@ export async function createClipboardHubServer(config) {
         });
         const stored = await store.append({ ...normalized, sourceIp: senderInfo.ip });
         if (!stored) {
-          sendSocketJson(ws, { ...normalized, sourceIp: senderInfo.ip });
+          sendSocketJson(ws, { type: 'clipboard.ack', clientEventId: normalized.clientEventId, status: 'duplicate' });
           return;
         }
 
+        const serialized = JSON.stringify(stored);
         for (const [peer, peerInfo] of clients.entries()) {
           if (
             peer.readyState !== peer.OPEN ||
@@ -284,14 +354,18 @@ export async function createClipboardHubServer(config) {
           ) {
             continue;
           }
-          sendSocketJson(peer, stored);
+          sendSocketJson(peer, serialized);
         }
+        if (normalized.clientEventId) sendSocketJson(ws, { type: 'clipboard.ack', clientEventId: normalized.clientEventId, id: stored.id, status: 'stored' });
       } catch (error) {
         const message =
           error instanceof SyntaxError || error instanceof ValidationError
             ? error.message
             : 'internal server error';
         sendSocketJson(ws, { type: 'error', message });
+      } finally {
+        queuedEntries -= 1;
+        queuedBytes -= bytes;
       }
     });
 
@@ -311,18 +385,31 @@ export async function createClipboardHubServer(config) {
         server.once('error', reject);
         server.listen(config.port, config.host, resolve);
       });
+      heartbeat = setInterval(() => {
+        for (const ws of clients.keys()) {
+          if (!ws.isAlive) { ws.terminate(); continue; }
+          ws.isAlive = false;
+          try { ws.ping(); } catch { ws.terminate(); }
+        }
+      }, config.heartbeatMs);
+      heartbeat.unref();
+      maintenance = setInterval(() => { store.maintain().catch(() => {}); }, config.maintenanceMs);
+      maintenance.unref();
     },
     address() {
       return server.address();
     },
     async close() {
+      clearInterval(heartbeat);
+      clearInterval(maintenance);
       for (const client of clients.keys()) {
-        client.close();
+        client.terminate();
       }
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
       wss.close();
+      await store.maintain();
     }
   };
 }

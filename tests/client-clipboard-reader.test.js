@@ -66,7 +66,7 @@ test('ClipboardSnapshotReader tries images for ambiguous Mac URI-list screenshot
   assert.equal(imageReads, 1);
 });
 
-test('ClipboardSnapshotReader caches stable image snapshots between image polls', () => {
+test('ClipboardSnapshotReader caches stable image snapshots with a reliable change token', () => {
   let now = 1_000;
   let imageReads = 0;
   const reader = new ClipboardSnapshotReader({
@@ -74,6 +74,7 @@ test('ClipboardSnapshotReader caches stable image snapshots between image polls'
     now: () => now
   });
   const clipboard = {
+    readChangeToken: () => 1,
     availableFormats: () => ['public.tiff'],
     readImage: () => {
       imageReads += 1;

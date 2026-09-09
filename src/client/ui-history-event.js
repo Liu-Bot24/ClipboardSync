@@ -1,4 +1,5 @@
 import { eventPreview } from './clipboard-content.js';
+import { assertImageBudget, MAX_IMAGE_BYTES } from './image-limits.js';
 
 const MAX_INLINE_IMAGE_PREVIEW_BYTES = 16 * 1024 * 1024;
 const MAX_THUMBNAIL_EDGE = 160;
@@ -71,7 +72,9 @@ function imagePreviewSrc(event, options = {}) {
     return null;
   }
 
+  if (event.content.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4) return null;
   const buffer = Buffer.from(event.content, 'base64');
+  try { assertImageBudget(buffer, event.contentType); } catch { return null; }
   const thumbnail = thumbnailSrc(buffer, options.nativeImage);
   if (thumbnail !== undefined) {
     return thumbnail;

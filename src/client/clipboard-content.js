@@ -25,7 +25,7 @@ export function textSnapshot(text) {
 }
 
 export function imageSnapshot(pngBuffer) {
-  const buffer = Buffer.from(pngBuffer);
+  const buffer = Buffer.isBuffer(pngBuffer) ? pngBuffer : Buffer.from(pngBuffer);
   const content = buffer.toString('base64');
   return {
     type: 'clipboard.update',

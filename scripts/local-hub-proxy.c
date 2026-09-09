@@ -302,7 +302,10 @@ int main(int argc, char **argv) {
       char target_url[512] = "";
       json_string(json, "listenHost", listen_host, sizeof(listen_host));
       snprintf(listen_port, sizeof(listen_port), "%d", json_int(json, "listenPort", 18787));
-      if (json_string(json, "targetUrl", target_url, sizeof(target_url))) {
+      if (json_string(json, "targetHost", target_host, sizeof(target_host)) &&
+          json_string(json, "targetPort", target_port, sizeof(target_port))) {
+        /* JavaScript URL parsing handles IPv6 and port validation. */
+      } else if (json_string(json, "targetUrl", target_url, sizeof(target_url))) {
         if (!parse_target_url(target_url, target_host, sizeof(target_host), target_port, sizeof(target_port))) {
           fprintf(stderr, "targetUrl parse failed: %s\n", target_url);
           free(json);

@@ -79,6 +79,7 @@ const MAIN_UI_IDS = [
   'saveConnection',
   'ignoredSourcePatterns',
   'ignoreUnknownSource',
+  'sourceCapability',
   'recentSources',
   'saveIgnore',
   'refresh',
@@ -646,4 +647,33 @@ test('history renderer renders text and image history and applies selected entri
     ['refresh'],
     ['clearHistory']
   ]);
+});
+
+for (const stateFirst of [true, false]) test(`S4: clear completion preserves new published history (stateFirst=${stateFirst})`, async () => {
+  let publish; let resolveClear;
+  const clear = new Promise((resolve) => { resolveClear = resolve; });
+  const document = await runRenderer('history-renderer.js', {
+    ids: ['history', 'historyStatus', 'historyAlwaysOnTop', 'refreshHistory', 'clearHistory'],
+    clipboardSync: { onState: (fn) => { publish = fn; }, getState: async () => ({ settings: {}, history: [] }),
+      clearHistory: () => clear, updateSetting: () => {}, refresh: () => {} }
+  });
+  const newer = { settings: {}, history: [{ id: 'after-clear', contentType: 'text/plain', preview: 'new record' }] };
+  const clicked = document.querySelector('#clearHistory').dispatch('click');
+  if (stateFirst) publish(newer);
+  resolveClear({ cleared: true }); await clicked;
+  if (!stateFirst) publish(newer);
+  assert.equal(document.querySelector('#history').children[0].children[1].textContent, 'new record');
+});
+
+test('history renderer ignores an initial snapshot that completes after a live state', async () => {
+  let publish; let resolveInitial;
+  const initial = new Promise((resolve) => { resolveInitial = resolve; });
+  const document = await runRenderer('history-renderer.js', {
+    ids: ['history', 'historyStatus', 'historyAlwaysOnTop', 'refreshHistory', 'clearHistory'],
+    clipboardSync: { onState: (fn) => { publish = fn; }, getState: () => initial,
+      clearHistory: async () => ({ cleared: true }), updateSetting: () => {}, refresh: () => {} }
+  });
+  publish({ settings: {}, history: [{ id: 'latest', contentType: 'text/plain', preview: 'new record' }] });
+  resolveInitial({ settings: {}, history: [] }); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(document.querySelector('#history').children[0].children[1]?.textContent, 'new record');
 });

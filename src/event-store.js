@@ -1,20 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, copyFile, mkdir, readFile, appendFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, appendFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
+import { ValidationError } from './event-validation.js';
 
-function parseHistory(content) {
-  const events = [];
-  let corrupt = false;
-
-  for (const line of content.split('\n').filter(Boolean)) {
-    try {
-      events.push(JSON.parse(line));
-    } catch {
-      corrupt = true;
-    }
-  }
-
-  return { events, corrupt };
+function validStoredEvent(event) {
+  return event && typeof event === 'object' && !Array.isArray(event) &&
+    typeof event.id === 'string' && event.id.length > 0 &&
+    Number.isSafeInteger(event.sequence) && event.sequence > 0 &&
+    Number.isFinite(Date.parse(event.createdAt)) &&
+    typeof event.sourceDeviceId === 'string' &&
+    ['text/plain', 'image/png', 'image/jpeg', 'image/webp'].includes(event.contentType) &&
+    event.encoding === (event.contentType === 'text/plain' ? 'utf8' : 'base64') &&
+    typeof event.content === 'string' && typeof event.sha256 === 'string' &&
+    (!event.targetDeviceIds || (Array.isArray(event.targetDeviceIds) && event.targetDeviceIds.every((id) => typeof id === 'string')));
 }
 
 function historyEntryBytes(event) {
@@ -22,50 +22,15 @@ function historyEntryBytes(event) {
 }
 
 function targetKey(event) {
-  return Array.isArray(event.targetDeviceIds) ? event.targetDeviceIds.slice().sort().join('\n') : '';
+  return JSON.stringify(Array.isArray(event.targetDeviceIds) ? event.targetDeviceIds.slice().sort() : null);
 }
 
-function isAdjacentDuplicate(previous, event) {
-  if (!previous) {
-    return false;
-  }
-  return (
-    previous.sourceDeviceId === event.sourceDeviceId &&
-    previous.contentType === event.contentType &&
-    previous.encoding === event.encoding &&
-    previous.sha256 === event.sha256 &&
-    previous.content === event.content &&
-    targetKey(previous) === targetKey(event)
-  );
+function eventIdentity(event) {
+  return event.clientEventId ? `${event.sourceDeviceId}:${event.clientEventId}` : null;
 }
 
-function samePayload(left, right) {
-  return (
-    left.contentType === right.contentType &&
-    left.encoding === right.encoding &&
-    left.sha256 === right.sha256 &&
-    left.content === right.content
-  );
-}
-
-function isRecentCrossDeviceEcho(events, event, nowMs, windowMs) {
-  if (!Number.isFinite(windowMs) || windowMs <= 0) {
-    return false;
-  }
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const previous = events[index];
-    const previousMs = Date.parse(previous.createdAt);
-    if (Number.isNaN(previousMs)) {
-      continue;
-    }
-    if (nowMs - previousMs > windowMs) {
-      return false;
-    }
-    if (previous.sourceDeviceId !== event.sourceDeviceId && samePayload(previous, event)) {
-      return true;
-    }
-  }
-  return false;
+function eventSignature(event) {
+  return `${event.contentType}:${event.encoding}:${event.sha256}:${targetKey(event)}`;
 }
 
 export class EventStore {
@@ -80,40 +45,62 @@ export class EventStore {
     this.events = [];
     this.nextSequenceNumber = 1;
     this.appendQueue = Promise.resolve();
+    this.eventBytes = new WeakMap();
+    this.totalBytes = 0;
+    this.fileBytes = 0;
+    this.dirty = false;
+    this.maintenanceError = null;
+    this.onMaintenanceError = options.onMaintenanceError ?? (() => {});
+    this.maxQueuedEntries = options.maxQueuedEntries ?? 256;
+    this.maxQueuedBytes = options.maxQueuedBytes ?? 128 * 1024 * 1024;
+    this.queuedEntries = 0;
+    this.queuedBytes = 0;
+    this.receipts = new Map();
   }
 
   async ready() {
     await mkdir(dirname(this.historyPath), { recursive: true, mode: 0o700 });
     await chmod(dirname(this.historyPath), 0o700);
 
-    let content = '';
+    let corrupt = false;
     let historyFileExists = false;
+    let lastByte;
     try {
-      content = await readFile(this.historyPath, 'utf8');
+      // Create the file before append commits; permission maintenance cannot fail after a commit.
+      await appendFile(this.historyPath, '', { mode: 0o600 });
       historyFileExists = true;
       await chmod(this.historyPath, 0o600);
+      const input = createReadStream(this.historyPath);
+      input.on('data', (chunk) => {
+        this.fileBytes += chunk.length;
+        lastByte = chunk.at(-1);
+      });
+      const lines = createInterface({ input, crlfDelay: Infinity });
+      for await (const line of lines) {
+        if (!line.trim()) continue;
+        let event;
+        try { event = JSON.parse(line); } catch { corrupt = true; continue; }
+        if (!validStoredEvent(event)) { corrupt = true; continue; }
+        this.nextSequenceNumber = Math.max(this.nextSequenceNumber, event.sequence + 1);
+        this.events.push(event);
+        const bytes = historyEntryBytes(event);
+        this.eventBytes.set(event, bytes);
+        this.totalBytes += bytes;
+        this.pruneMemory();
+      }
     } catch (error) {
       if (error.code !== 'ENOENT') {
         throw error;
       }
     }
 
-    const parsed = parseHistory(content);
-    this.events = parsed.events;
-
-    const lastSequence = this.events.reduce(
-      (max, event) => Math.max(max, Number.isInteger(event.sequence) ? event.sequence : 0),
-      0
-    );
-    this.nextSequenceNumber = lastSequence + 1;
-    if (parsed.corrupt && historyFileExists) {
+    if (corrupt && historyFileExists) {
       const backupPath = `${this.historyPath}.broken-${this.now().getTime()}`;
       await copyFile(this.historyPath, backupPath);
       await chmod(backupPath, 0o600);
       await this.pruneBrokenBackups();
     }
-    const pruned = this.pruneMemory();
-    if (parsed.corrupt || pruned) {
+    if (corrupt || this.dirty || (lastByte !== undefined && lastByte !== 10) || this.fileBytes > this.maxHistoryBytes) {
       await this.compact();
     }
   }
@@ -151,7 +138,16 @@ export class EventStore {
   }
 
   async append(event) {
-    const operation = this.appendQueue.then(() => this.appendNow(event));
+    const bytes = historyEntryBytes(event);
+    if (this.queuedEntries >= this.maxQueuedEntries || this.queuedBytes + bytes > this.maxQueuedBytes) {
+      throw new ValidationError('history queue is full; retry later');
+    }
+    this.queuedEntries += 1;
+    this.queuedBytes += bytes;
+    const operation = this.appendQueue.then(() => this.appendNow(event)).finally(() => {
+      this.queuedEntries -= 1;
+      this.queuedBytes -= bytes;
+    });
     this.appendQueue = operation.catch(() => {});
     return operation;
   }
@@ -163,12 +159,21 @@ export class EventStore {
   }
 
   async appendNow(event) {
-    if (isAdjacentDuplicate(this.events.at(-1), event)) {
+    const now = this.now();
+    const identity = eventIdentity(event);
+    for (const [key, receipt] of this.receipts) {
+      if (now.getTime() - receipt.at > 600_000) this.receipts.delete(key);
+    }
+    const previous = identity && (this.receipts.get(identity) || this.events.find((item) => eventIdentity(item) === identity));
+    if (previous) {
+      if ((previous.signature ?? eventSignature(previous)) !== eventSignature(event)) {
+        throw new ValidationError('clientEventId was reused for a different event');
+      }
       return null;
     }
-    const now = this.now();
-    if (isRecentCrossDeviceEcho(this.events, event, now.getTime(), this.duplicateContentWindowMs)) {
-      return null;
+    if (this.maintenanceError) {
+      await this.tryCompact();
+      if (this.maintenanceError) throw new ValidationError('history maintenance failed; retry after storage recovers');
     }
 
     const stored = {
@@ -177,13 +182,31 @@ export class EventStore {
       sequence: this.nextSequenceNumber,
       createdAt: now.toISOString()
     };
+    const serialized = `${JSON.stringify(stored)}\n`;
+    const bytes = Buffer.byteLength(serialized, 'utf8');
+    if (bytes > this.maxHistoryBytes) throw new ValidationError('event exceeds the history byte budget');
+    try {
+      await appendFile(this.historyPath, serialized, { encoding: 'utf8', mode: 0o600 });
+    } catch (error) {
+      // A rejected append may have written a prefix. Rebuild from committed
+      // records before accepting another append onto this uncertain tail.
+      this.dirty = true;
+      this.maintenanceError = error;
+      try { this.onMaintenanceError(error); } catch { /* Preserve the write error. */ }
+      throw error;
+    }
     this.nextSequenceNumber += 1;
-
-    await appendFile(this.historyPath, `${JSON.stringify(stored)}\n`, { encoding: 'utf8', mode: 0o600 });
-    await chmod(this.historyPath, 0o600);
+    if (identity) {
+      this.receipts.set(identity, { signature: eventSignature(event), at: now.getTime() });
+      while (this.receipts.size > 4096) this.receipts.delete(this.receipts.keys().next().value);
+    }
     this.events.push(stored);
-    if (this.pruneMemory()) {
-      await this.compact();
+    this.eventBytes.set(stored, bytes);
+    this.totalBytes += bytes;
+    this.fileBytes += bytes;
+    this.pruneMemory();
+    if (this.dirty && (this.fileBytes > this.maxHistoryBytes || this.totalBytes <= this.fileBytes * 0.75)) {
+      await this.tryCompact();
     }
     return stored;
   }
@@ -194,18 +217,24 @@ export class EventStore {
 
   recent(limit = 50) {
     const safeLimit = this.safeLimit(limit);
-    return safeLimit === 0 ? [] : this.events.slice(-safeLimit);
+    return safeLimit === 0 ? [] : this.liveEvents().slice(-safeLimit);
   }
 
   recentWhere(limit = 50, predicate) {
     const safeLimit = this.safeLimit(limit);
-    return safeLimit === 0 ? [] : this.events.filter(predicate).slice(-safeLimit);
+    return safeLimit === 0 ? [] : this.liveEvents().filter(predicate).slice(-safeLimit);
+  }
+
+  liveEvents() {
+    const cutoff = this.now().getTime() - this.maxHistoryAgeMs;
+    return this.events.filter((event) => Date.parse(event.createdAt) >= cutoff);
   }
 
   async clearNow() {
     const cleared = this.events.length;
+    await this.compact([]);
     this.events = [];
-    await this.compact();
+    this.totalBytes = 0;
     return cleared;
   }
 
@@ -214,30 +243,47 @@ export class EventStore {
     const cutoff = this.now().getTime() - this.maxHistoryAgeMs;
 
     this.events = this.events.filter((event) => {
-      const createdAtMs = Date.parse(event.createdAt);
-      return Number.isNaN(createdAtMs) || createdAtMs >= cutoff;
+      if (Date.parse(event.createdAt) >= cutoff) return true;
+      this.totalBytes -= this.eventBytes.get(event) ?? historyEntryBytes(event);
+      return false;
     });
 
-    if (this.events.length > this.maxHistoryEntries) {
-      this.events = this.events.slice(-this.maxHistoryEntries);
+    while (this.events.length && (this.events.length > this.maxHistoryEntries || this.totalBytes > this.maxHistoryBytes)) {
+      const event = this.events.shift();
+      this.totalBytes -= this.eventBytes.get(event) ?? historyEntryBytes(event);
     }
 
-    while (
-      this.events.length > 1 &&
-      this.events.reduce((total, event) => total + historyEntryBytes(event), 0) > this.maxHistoryBytes
-    ) {
-      this.events.shift();
-    }
-
-    return this.events.length !== originalLength;
+    const pruned = this.events.length !== originalLength;
+    this.dirty ||= pruned;
+    return pruned;
   }
 
-  async compact() {
-    const content = this.events.map((event) => JSON.stringify(event)).join('\n');
+  async tryCompact() {
+    try {
+      await this.compact();
+    } catch (error) {
+      this.maintenanceError = error;
+      try { this.onMaintenanceError(error); } catch { /* Reporting must not undo a committed append. */ }
+    }
+  }
+
+  async maintain() {
+    const operation = this.appendQueue.then(async () => {
+      this.pruneMemory();
+      if (this.dirty) await this.tryCompact();
+    });
+    this.appendQueue = operation.catch(() => {});
+    return operation;
+  }
+
+  async compact(events = this.events) {
+    const content = events.map((event) => JSON.stringify(event)).join('\n');
     const tempPath = `${this.historyPath}.tmp`;
     await writeFile(tempPath, content ? `${content}\n` : '', { encoding: 'utf8', mode: 0o600 });
     await chmod(tempPath, 0o600);
     await rename(tempPath, this.historyPath);
-    await chmod(this.historyPath, 0o600);
+    this.fileBytes = Buffer.byteLength(content ? `${content}\n` : '', 'utf8');
+    this.dirty = false;
+    this.maintenanceError = null;
   }
 }

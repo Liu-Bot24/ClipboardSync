@@ -40,13 +40,13 @@ test('EventStore appends events with identity and sequence metadata', async () =
   });
 });
 
-test('EventStore skips adjacent duplicate events from the same source and targets', async () => {
+test('EventStore deduplicates the same operation ID from the same source and targets', async () => {
   await withTempStore(async (historyPath) => {
     const store = new EventStore(historyPath, { maxHistoryEntries: 10 });
     await store.ready();
 
-    const first = await store.append({ ...baseEvent, targetDeviceIds: ['macbook', 'mac-mini'] });
-    const duplicate = await store.append({ ...baseEvent, targetDeviceIds: ['mac-mini', 'macbook'] });
+    const first = await store.append({ ...baseEvent, clientEventId: 'operation-1', targetDeviceIds: ['macbook', 'mac-mini'] });
+    const duplicate = await store.append({ ...baseEvent, clientEventId: 'operation-1', targetDeviceIds: ['mac-mini', 'macbook'] });
 
     assert.equal(duplicate, null);
     assert.deepEqual(store.recent(10), [first]);
@@ -71,7 +71,7 @@ test('EventStore stores the same payload again after another clipboard event int
   });
 });
 
-test('EventStore skips recent cross-device echoes with the same payload but allows later intentional repeats', async () => {
+test('EventStore preserves independent same-content operations from different devices', async () => {
   await withTempStore(async (historyPath) => {
     let now = Date.parse('2026-06-01T00:00:00.000Z');
     const store = new EventStore(historyPath, {
@@ -87,12 +87,13 @@ test('EventStore skips recent cross-device echoes with the same payload but allo
     now += 15_000;
     const laterRepeat = await store.append({ ...baseEvent, sourceDeviceId: 'mac-mini' });
 
-    assert.equal(echo, null);
+    assert.notEqual(echo, null);
     assert.notEqual(laterRepeat, null);
     assert.deepEqual(
       store.recent(10).map((event) => [event.sourceDeviceId, event.sequence]),
       [
         ['windows-pc', first.sequence],
+        ['macbook', echo.sequence],
         ['mac-mini', laterRepeat.sequence]
       ]
     );
@@ -119,9 +120,9 @@ test('EventStore keeps valid history and backs up a corrupt JSONL file on startu
     await writeFile(
       historyPath,
       [
-        JSON.stringify({ id: 'valid-1', sequence: 1, content: 'one', createdAt: '2026-06-01T00:00:00.000Z' }),
+        JSON.stringify({ ...baseEvent, id: 'valid-1', sequence: 1, content: 'one', createdAt: '2026-06-01T00:00:00.000Z' }),
         '{ not valid json',
-        JSON.stringify({ id: 'valid-2', sequence: 2, content: 'two', createdAt: '2026-06-01T00:00:01.000Z' })
+        JSON.stringify({ ...baseEvent, id: 'valid-2', sequence: 2, content: 'two', createdAt: '2026-06-01T00:00:01.000Z' })
       ].join('\n') + '\n'
     );
 
@@ -138,7 +139,7 @@ test('EventStore keeps valid history and backs up a corrupt JSONL file on startu
       true
     );
     const backup = (await readdir(dirname(historyPath))).find((file) => file.startsWith('history.jsonl.broken-'));
-    assert.equal((await stat(join(dirname(historyPath), backup))).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal((await stat(join(dirname(historyPath), backup))).mode & 0o777, 0o600);
   });
 });
 
@@ -162,16 +163,16 @@ test('EventStore prunes old corrupt history backups', async () => {
     assert.equal(backups.length, 2);
     assert.equal(backups.includes('history.jsonl.broken-1000'), false);
     for (const backup of backups) {
-      assert.equal((await stat(join(dirname(historyPath), backup))).mode & 0o777, 0o600);
+      if (process.platform !== 'win32') assert.equal((await stat(join(dirname(historyPath), backup))).mode & 0o777, 0o600);
     }
   });
 });
 
-test('EventStore tightens permissions on an existing history file during startup', async () => {
+test('EventStore tightens POSIX permissions on an existing history file during startup', { skip: process.platform === 'win32' }, async () => {
   await withTempStore(async (historyPath) => {
     await writeFile(
       historyPath,
-      JSON.stringify({ id: 'valid-1', sequence: 1, content: 'one', createdAt: '2026-06-01T00:00:00.000Z' }) + '\n'
+      JSON.stringify({ ...baseEvent, id: 'valid-1', sequence: 1, content: 'one', createdAt: '2026-06-01T00:00:00.000Z' }) + '\n'
     );
     await chmod(historyPath, 0o644);
 
@@ -235,13 +236,15 @@ test('EventStore compacts persisted history to the newest max entries', async ()
 
     assert.deepEqual(store.recent(10), [two, three]);
 
+    await store.maintain();
+
     const reloaded = new EventStore(historyPath, { maxHistoryEntries: 10 });
     await reloaded.ready();
     assert.deepEqual(reloaded.recent(10), [two, three]);
 
     const lines = (await readFile(historyPath, 'utf8')).trim().split('\n');
     assert.equal(lines.length, 2);
-    assert.equal((await stat(historyPath)).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal((await stat(historyPath)).mode & 0o777, 0o600);
   });
 });
 
