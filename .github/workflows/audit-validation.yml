@@ -1,7 +1,9 @@
-name: Audit validation
+name: Continuous integration
 on:
   push:
-    branches: ['audit/clipboardsync-*']
+    branches: ['main', 'audit/clipboardsync-*']
+  pull_request:
+    branches: ['main']
   workflow_dispatch:
 permissions:
   contents: read
