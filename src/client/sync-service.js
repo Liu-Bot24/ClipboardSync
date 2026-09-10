@@ -3,6 +3,8 @@ import { decodedBufferForEvent, hashEventPayload } from './clipboard-content.js'
 import { shouldIgnoreLocalClipboardSource } from './source-ignore.js';
 import { randomUUID } from 'node:crypto';
 
+const MAX_UNCONFIRMED_WRITES = 2;
+
 function snapshotByteLength(snapshot) {
   return Number.isInteger(snapshot.byteLength) ? snapshot.byteLength : decodedBufferForEvent(snapshot).length;
 }
@@ -37,6 +39,7 @@ export class ClipboardSyncService {
     this.lastObservedHash = null;
     this.localEvent = null;
     this.submittedLocalEventId = null;
+    this.unconfirmedWrites = [];
     this.boundClipboardListener = (event) => this.applyRemoteEvent(event);
     this.boundAckListener = (event) => this.acknowledgeLocalEvent(event);
   }
@@ -44,6 +47,7 @@ export class ClipboardSyncService {
   start() {
     this.stop();
     this.stopped = false;
+    this.hasLocalBaseline = false;
     this.establishLocalBaseline();
     this.hub.on('clipboard', this.boundClipboardListener);
     this.hub.on('ack', this.boundAckListener);
@@ -102,7 +106,8 @@ export class ClipboardSyncService {
 
   beginWrite(event, remote, acceptPrevious = null) {
     this.invalidatePendingWork();
-    const operation = { event, hash: hashEventPayload(event), remote, acceptPrevious, status: 'pending', controller: new AbortController() };
+    const operation = { event, hash: hashEventPayload(event), remote, acceptPrevious, status: 'pending', controller: new AbortController(),
+      observedHash: this.lastObservedHash, hasObservation: this.hasLocalBaseline, writeToken: Symbol('clipboard-write') };
     operation.promise = new Promise((resolve) => { operation.resolve = resolve; });
     this.currentWrite = operation;
     if (this.stopped) {
@@ -124,7 +129,8 @@ export class ClipboardSyncService {
       this.resetClipboardReadCache();
       const actual = this.readSnapshot();
       if (!actual.ok || actual.snapshot?.hash !== operation.actualHash) {
-        this.cancelWrite();
+        if (actual.ok && !this.isKnownSnapshot(actual.snapshot, operation)) this.observeNewLocalSnapshot(actual.snapshot);
+        else this.cancelWrite();
         return false;
       }
     }
@@ -136,6 +142,7 @@ export class ClipboardSyncService {
   }
 
   confirmWrite(operation, snapshot, attempt) {
+    this.generation += 1;
     this.trace({ stage: 'clipboard-write-passed', attempt, contentType: operation.event.contentType,
       sourceDeviceId: operation.event.sourceDeviceId, targetDeviceIds: operation.event.targetDeviceIds, hash: operation.hash });
     this.loopGuard.markApplied(operation.hash);
@@ -146,6 +153,7 @@ export class ClipboardSyncService {
     this.pendingLocalHashes.clear();
     this.hasLocalBaseline = true;
     operation.actualHash = snapshot.hash;
+    this.unconfirmedWrites = [];
     this.finishWrite(operation, 'succeeded');
     return true;
   }
@@ -208,6 +216,12 @@ export class ClipboardSyncService {
       } else {
         this.clipboard.writeEvent(event);
       }
+      // A completed OS write can outlive its confirmation or cancellation.
+      // Retain only its matcher until readback or a distinct local copy resolves it.
+      const hash = operation.hash;
+      const matches = operation.prepared?.matches ?? ((snapshot) => snapshot?.hash === hash);
+      this.unconfirmedWrites = this.unconfirmedWrites.filter((write) => write.token !== operation.writeToken);
+      this.unconfirmedWrites.push({ token: operation.writeToken, matches });
       return true;
     } catch (error) {
       this.reportError(error);
@@ -267,11 +281,13 @@ export class ClipboardSyncService {
     if (!ok) {
       return;
     }
+    if (!this.isKnownSnapshot(snapshot, null)) this.unconfirmedWrites = [];
     this.lastLocalHash = snapshot?.hash || null;
     this.lastObservedHash = this.lastLocalHash;
     this.localEvent = null;
     this.pendingLocalHashes.clear();
     this.hasLocalBaseline = true;
+    this.consumeWriteEvidence(snapshot);
   }
 
   hasPendingLocalHash(hash) {
@@ -295,9 +311,48 @@ export class ClipboardSyncService {
   }
 
   rememberKnownSnapshot(snapshot) {
+    if ((snapshot?.hash ?? null) !== this.lastObservedHash) this.generation += 1;
     this.lastObservedHash = snapshot?.hash ?? null;
     this.lastLocalHash = this.lastObservedHash;
     this.hasLocalBaseline = true;
+    if (this.currentWrite?.status === 'pending') {
+      this.currentWrite.observedHash = this.lastObservedHash;
+      this.currentWrite.hasObservation = true;
+    }
+    this.consumeWriteEvidence(snapshot);
+  }
+
+  unconfirmedWriteMatches(snapshot) {
+    return this.unconfirmedWrites.some((write) => write.matches(snapshot));
+  }
+
+  consumeWriteEvidence(snapshot) {
+    const observed = this.unconfirmedWrites.findLastIndex((write) => write.matches(snapshot));
+    if (observed >= 0) this.unconfirmedWrites.splice(0, observed + 1);
+  }
+
+  isKnownSnapshot(snapshot, operation = this.currentWrite) {
+    return this.isKnownWriteObservation(snapshot, operation) ||
+      (operation?.status === 'pending' && operation.acceptPrevious?.(snapshot));
+  }
+
+  isKnownWriteObservation(snapshot, operation = this.currentWrite) {
+    const hash = snapshot?.hash ?? null;
+    return hash === this.lastObservedHash || this.unconfirmedWriteMatches?.(snapshot) ||
+      (operation?.status === 'pending' && ((operation.hasObservation && hash === operation.observedHash) ||
+        (operation.hasWritten && this.writeMatches(operation, snapshot))));
+  }
+
+  observeNewLocalSnapshot(snapshot) {
+    this.generation += 1;
+    this.unconfirmedWrites = [];
+    this.cancelWrite();
+    this.submittedLocalEventId = null;
+    this.lastLocalHash = null;
+    this.loopGuard.reset?.();
+    this.lastObservedHash = snapshot?.hash ?? null;
+    this.localEvent = snapshot ? { hash: snapshot.hash, id: randomUUID() } : null;
+    this.pendingLocalHashes.clear();
   }
 
   acknowledgeLocalEvent(event) {
@@ -329,6 +384,11 @@ export class ClipboardSyncService {
     if (!ok) {
       return;
     }
+    return this.processLocalSnapshot(snapshot);
+  }
+
+  processLocalSnapshot(snapshot) {
+    if (this.stopped) return;
     const writing = this.currentWrite;
     if (writing?.status === 'pending' && this.isWriteCurrent(writing)) {
       if (writing.hasWritten && this.writeMatches(writing, snapshot)) {
@@ -340,14 +400,12 @@ export class ClipboardSyncService {
         return;
       }
     }
+    if (this.unconfirmedWriteMatches?.(snapshot)) {
+      this.rememberKnownSnapshot(snapshot);
+      return;
+    }
     if ((snapshot?.hash ?? null) !== this.lastObservedHash) {
-      this.cancelWrite();
-      this.submittedLocalEventId = null;
-      this.lastLocalHash = null;
-      this.loopGuard.reset?.();
-      this.lastObservedHash = snapshot?.hash ?? null;
-      this.localEvent = snapshot ? { hash: snapshot.hash, id: randomUUID() } : null;
-      this.pendingLocalHashes.clear();
+      this.observeNewLocalSnapshot(snapshot);
     }
     if (!snapshot) {
       this.lastLocalHash = null;
@@ -407,7 +465,7 @@ export class ClipboardSyncService {
       return;
     }
     if (current.snapshot?.hash !== snapshot.hash) {
-      return this.pollLocalClipboardNow();
+      return this.processLocalSnapshot(current.snapshot);
     }
     this.observeLocalSource(source, snapshot);
     if (shouldIgnoreLocalClipboardSource(source, settings)) {
@@ -466,20 +524,33 @@ export class ClipboardSyncService {
       return this.confirmWrite(operation, previous.snapshot, attempt);
     }
     if (previous.ok && operation.acceptPrevious && !operation.acceptPrevious(previous.snapshot)) {
-      this.cancelWrite();
+      this.observeNewLocalSnapshot(previous.snapshot);
       return false;
     }
     if (previous.ok && operation.acceptPrevious) this.rememberKnownSnapshot(previous.snapshot);
-    if (attempt > 1 && !operation.acceptPrevious && operation.hasObservation && previous.ok && previous.snapshot?.hash !== operation.observedHash) {
-      this.cancelWrite();
+    const knownWrite = previous.ok && this.unconfirmedWriteMatches?.(previous.snapshot);
+    if (previous.ok && !this.isKnownSnapshot(previous.snapshot, operation)) {
+      this.unconfirmedWrites = [];
+    }
+    if (attempt > 1 && !operation.acceptPrevious && previous.ok && !knownWrite &&
+        (!operation.hasObservation || (previous.snapshot?.hash ?? null) !== operation.observedHash)) {
+      this.observeNewLocalSnapshot(previous.snapshot);
       return false;
     }
     if (!previous.ok) {
       this.scheduleClipboardWriteRetry(event, hash, attempt, 'read-error', operation);
       return false;
     }
-    operation.observedHash = previous.snapshot?.hash;
+    if (knownWrite) this.rememberKnownSnapshot(previous.snapshot);
+    operation.observedHash = previous.snapshot?.hash ?? null;
     operation.hasObservation = true;
+    // Keep the predecessor and current physical write until their readback is
+    // observed. Wait rather than dropping evidence to admit another write.
+    if (this.unconfirmedWrites.length >= MAX_UNCONFIRMED_WRITES &&
+        !this.unconfirmedWrites.some((write) => write.token === operation.writeToken)) {
+      this.scheduleClipboardWriteRetry(event, hash, attempt, 'write-readback-pending', operation);
+      return false;
+    }
     if (!this.writeEvent(event, operation)) {
       this.scheduleClipboardWriteRetry(event, hash, attempt, 'write-error', operation);
       return false;
@@ -488,6 +559,10 @@ export class ClipboardSyncService {
     this.resetClipboardReadCache();
     const actual = this.readSnapshot();
     const matches = actual.ok && this.writeMatches(operation, actual.snapshot);
+    if (actual.ok && !matches && !this.isKnownSnapshot(actual.snapshot, operation)) {
+      this.observeNewLocalSnapshot(actual.snapshot);
+      return false;
+    }
     if (!matches) {
       this.scheduleClipboardWriteRetry(event, hash, attempt, actual.ok ? 'write-not-observed' : 'read-error', operation);
       return false;
@@ -508,12 +583,14 @@ export class ClipboardSyncService {
       if (event.id && event.clientEventId && event.clientEventId === this.submittedLocalEventId) {
         this.submittedLocalEventId = null;
         const current = this.readSnapshot();
+        if (current.ok && !this.isKnownSnapshot(current.snapshot)) {
+          this.observeNewLocalSnapshot(current.snapshot);
+          return;
+        }
         const previousWrite = this.currentWrite?.remote ? this.currentWrite : null;
-        const observedHash = this.lastObservedHash;
-        const acceptPrevious = (snapshot) => snapshot?.hash === observedHash ||
-          (previousWrite?.hasWritten && this.writeMatches(previousWrite, snapshot));
+        const acceptPrevious = (snapshot) => this.isKnownWriteObservation(snapshot);
         if ((!current.ok || acceptPrevious(current.snapshot)) && !settings.pauseReceive && isReceiveAllowed(event, settings)) {
-          if (current.ok && current.snapshot?.hash === hash && !previousWrite?.hasWritten) {
+          if (current.ok && current.snapshot?.hash === hash && !previousWrite?.hasWritten && this.unconfirmedWrites.length === 0) {
             this.cancelWrite();
           } else {
             this.beginWrite(event, true, acceptPrevious);

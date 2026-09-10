@@ -85,6 +85,7 @@ let macLocalProxy = null;
 let hubConnectionSettings = null;
 let connectionChangeRevision = 0;
 let connectionSettingsRevision = 0;
+let settingsUpdateQueue = Promise.resolve();
 const uiHistoryEventCache = new Map();
 const historyMenuIconCache = new Map();
 const uiLifecycle = createUiLifecycle();
@@ -596,6 +597,13 @@ function showHistoryPopup() {
 }
 
 async function updateSettings(patch) {
+  const queuedPatch = typeof patch === 'function' ? patch : JSON.parse(JSON.stringify(patch));
+  const operation = settingsUpdateQueue.then(() => applySettingsPatch(typeof queuedPatch === 'function' ? queuedPatch(configStore.get()) : queuedPatch));
+  settingsUpdateQueue = operation.catch(() => {});
+  return operation;
+}
+
+async function applySettingsPatch(patch) {
   const normalizedPatch = { ...patch };
   for (const key of ['pauseSend', 'pauseReceive', 'autoLaunch', 'historyAlwaysOnTop']) {
     if (key in normalizedPatch) {
@@ -619,27 +627,31 @@ async function updateSettings(patch) {
       : String(normalizedPatch.ignoredSourcePatterns || '').split(/\r?\n/);
   }
 
-  const changesSyncPolicy = ['pauseSend', 'pauseReceive', 'deviceRules', 'deviceRulesByIp',
-    'ignoreUnknownSource', 'ignoredSourcePatterns', 'maxSendBytes', 'hubUrl', 'token', 'deviceId', 'deviceName']
-    .some((key) => key in normalizedPatch);
-  if (changesSyncPolicy) syncService?.updatePolicy({ ...configStore.get(), ...normalizedPatch });
-  historyRefresh.invalidate();
-  const connectionChanged = ['token', 'hubUrl', 'deviceId', 'deviceName'].some((key) => key in normalizedPatch);
-  const revision = connectionChanged ? ++connectionChangeRevision : connectionChangeRevision;
-  if (connectionChanged) {
-    historyRefresh.setEnabled(false);
-    hub.stop();
-    syncService?.stop();
-    history = [];
-    clearHistoryRenderCaches();
-    broadcastState();
-  }
+  const previousSettings = configStore.get();
   let settings;
   try {
     settings = await configStore.update(normalizedPatch);
   } catch (error) {
     setStatus({ state: 'config-error', message: error.message });
     return stateForUi();
+  }
+  const changesSyncPolicy = ['pauseSend', 'pauseReceive', 'deviceRules', 'deviceRulesByIp',
+    'ignoreUnknownSource', 'ignoredSourcePatterns', 'maxSendBytes', 'hubUrl', 'token', 'deviceId']
+    .some((key) => key in normalizedPatch);
+  if (changesSyncPolicy) syncService?.updatePolicy(settings);
+  historyRefresh.invalidate();
+  const identityChanged = ['token', 'hubUrl', 'deviceId'].some((key) => settings[key] !== previousSettings[key]);
+  const connectionChanged = identityChanged || settings.deviceName !== previousSettings.deviceName;
+  const revision = connectionChanged ? ++connectionChangeRevision : connectionChangeRevision;
+  if (connectionChanged) {
+    historyRefresh.setEnabled(false);
+    hub.stop();
+    if (identityChanged) {
+      syncService?.stop();
+      history = [];
+      clearHistoryRenderCaches();
+    }
+    broadcastState();
   }
   if ('historyAlwaysOnTop' in normalizedPatch) {
     applyHistoryAlwaysOnTop();
@@ -651,7 +663,7 @@ async function updateSettings(patch) {
     const connectedSettings = await syncHubConnectionSettings();
     if (connectedSettings && revision === connectionChangeRevision) {
       hub.start();
-      syncService?.start();
+      if (identityChanged || syncService?.stopped) syncService?.start();
     }
   }
   return stateForUi();
@@ -661,8 +673,7 @@ async function updateRule(deviceId, column, checked) {
   if (column !== 'send' && column !== 'receive') {
     return stateForUi();
   }
-  const settings = configStore.get();
-  await updateSettings(updateDeviceRule(settings, devices, deviceId, column, checked));
+  await updateSettings((settings) => updateDeviceRule(settings, devices, deviceId, column, checked));
   return stateForUi();
 }
 
@@ -861,11 +872,10 @@ async function main() {
         ownPresent: nextDevices.some((device) => device.deviceId === configStore.get().deviceId)
       });
       devices = nextDevices;
-      const settings = configStore.get();
-      await configStore.update({
-        deviceRules: mergeDeviceRules(settings.deviceRules, settings.deviceRulesByIp, devices),
-        deviceRulesByIp: mergeDeviceRulesByIp(settings.deviceRulesByIp, devices, settings.deviceRules)
-      });
+      await configStore.update((settings) => ({
+        deviceRules: mergeDeviceRules(settings.deviceRules, settings.deviceRulesByIp, nextDevices),
+        deviceRulesByIp: mergeDeviceRulesByIp(settings.deviceRulesByIp, nextDevices, settings.deviceRules)
+      }));
       hub.sendReceiverPolicy(currentHubSettings());
       broadcastState();
     } catch (error) { setStatus({ state: 'config-error', message: error.message }); }

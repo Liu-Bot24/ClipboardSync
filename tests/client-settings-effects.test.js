@@ -26,12 +26,12 @@ function harness() {
     } }
   });
   state.service.establishLocalBaseline();
-  state.updateSettings = vm.runInNewContext(`(${updateSource})`, {
+  state.updateSettings = vm.runInNewContext(`${updateSource}; updateSettings`, {
     syncService: state.service, historyRefresh: new HistoryRefreshController(), hub, normalizeHubUrl,
     configStore: { get: () => state.settings, update: async (patch) => { state.settings = { ...state.settings, ...patch }; return state.settings; } },
     setStatus: () => {}, stateForUi: () => ({}), applyHistoryAlwaysOnTop: () => {},
     applyLoginItemSettings: () => {}, broadcastState: () => {}, clearHistoryRenderCaches: () => {},
-    connectionChangeRevision: 0, history: [], syncHubConnectionSettings: async () => state.settings
+    settingsUpdateQueue: Promise.resolve(), connectionChangeRevision: 0, history: [], syncHubConnectionSettings: async () => state.settings
   });
   return state;
 }

@@ -5,6 +5,14 @@ import { imageFingerprint } from './image-fingerprint.js';
 import { hashEventPayload } from './clipboard-content.js';
 import { assertImageBudget, MAX_IMAGE_BYTES } from './image-limits.js';
 
+function textMatcher(hash) {
+  return (snapshot) => snapshot?.contentType === 'text/plain' && snapshot.hash === hash;
+}
+
+function pixelMatcher(pixelHash) {
+  return (snapshot) => snapshot?.pixelHash === pixelHash;
+}
+
 export class ElectronClipboardAdapter {
   constructor(options = {}) {
     this.reader = options.reader ?? new ClipboardSnapshotReader(options);
@@ -29,7 +37,7 @@ export class ElectronClipboardAdapter {
       const hash = hashEventPayload(event);
       return {
         write: () => this.clipboard.writeText(event.content),
-        matches: (snapshot) => snapshot?.contentType === 'text/plain' && snapshot.hash === hash
+        matches: textMatcher(hash)
       };
     }
 
@@ -43,7 +51,7 @@ export class ElectronClipboardAdapter {
     const pixelHash = imageFingerprint(image);
     return {
       write: () => this.clipboard.writeImage(image),
-      matches: (snapshot) => snapshot?.pixelHash === pixelHash
+      matches: pixelMatcher(pixelHash)
     };
   }
 }

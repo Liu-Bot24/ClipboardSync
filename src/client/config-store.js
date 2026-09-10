@@ -85,6 +85,7 @@ export class ConfigStore {
     this.settings = defaultClientSettings(options.env);
     this.createdOnLoad = false;
     this.saveQueue = Promise.resolve();
+    this.updateQueue = Promise.resolve();
     this.persistedContent = null;
   }
 
@@ -174,6 +175,13 @@ export class ConfigStore {
   }
 
   async update(patch) {
+    const snapshot = typeof patch === 'function' ? patch : structuredClone(patch);
+    const operation = this.updateQueue.then(() => this.updateNow(typeof snapshot === 'function' ? snapshot(this.settings) : snapshot));
+    this.updateQueue = operation.catch(() => {});
+    return operation;
+  }
+
+  async updateNow(patch) {
     const normalizedPatch = { ...patch };
     if ('ignoredSourcePatterns' in normalizedPatch) {
       normalizedPatch.ignoredSourcePatterns = normalizeIgnoredSourcePatterns(normalizedPatch.ignoredSourcePatterns);
@@ -187,18 +195,19 @@ export class ConfigStore {
     if ('language' in normalizedPatch) {
       normalizedPatch.language = normalizeLanguage(normalizedPatch.language);
     }
-    this.settings = {
+    const settings = {
       ...this.settings,
       ...normalizedPatch,
       deviceRules: normalizedPatch.deviceRules || this.settings.deviceRules || {},
       deviceRulesByIp: normalizedPatch.deviceRulesByIp || this.settings.deviceRulesByIp || {}
     };
-    await this.save();
-    return this.settings;
+    await this.save(settings);
+    this.settings = settings;
+    return settings;
   }
 
-  async save() {
-    const content = `${JSON.stringify(this.settings, null, 2)}\n`;
+  async save(settings = this.settings) {
+    const content = `${JSON.stringify(settings, null, 2)}\n`;
     const operation = this.saveQueue.then(async () => {
       if (content === this.persistedContent) return;
       await mkdir(dirname(this.path), { recursive: true });
