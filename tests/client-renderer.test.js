@@ -241,7 +241,7 @@ test('ui renderer adds a recent clipboard source to ignored source rules', async
   await recentRows[0].children[1].dispatch('click');
 
   assert.deepEqual(plain(calls), [
-    ['updateSetting', { ignoredSourcePatterns: ['Voice Input', 'DictationHelper'] }]
+    ['updateSetting', { ignoreUnknownSource: false, ignoredSourcePatterns: ['Voice Input', 'DictationHelper'] }]
   ]);
 });
 
@@ -284,7 +284,7 @@ test('ui renderer turns unidentified recent copy sources into the unknown-source
   await row.children[1].dispatch('click');
 
   assert.equal(document.querySelector('#ignoreUnknownSource').checked, true);
-  assert.deepEqual(plain(calls), [['updateSetting', { ignoreUnknownSource: true }]]);
+  assert.deepEqual(plain(calls), [['updateSetting', { ignoreUnknownSource: true, ignoredSourcePatterns: [] }]]);
 });
 
 test('ui renderer localizes dynamic main window text in English', async () => {
@@ -676,4 +676,239 @@ test('history renderer ignores an initial snapshot that completes after a live s
   publish({ settings: {}, history: [{ id: 'latest', contentType: 'text/plain', preview: 'new record' }] });
   resolveInitial({ settings: {}, history: [] }); await new Promise((resolve) => setImmediate(resolve));
   assert.equal(document.querySelector('#history').children[0].children[1]?.textContent, 'new record');
+});
+
+test('ui renderer preserves unsaved connection and ignore edits across state refreshes', async () => {
+  let stateListener;
+  const document = await runRenderer('ui-renderer.js', {
+    ids: MAIN_UI_IDS,
+    clipboardSync: {
+      platform: 'darwin',
+      onState: (listener) => {
+        stateListener = listener;
+      },
+      getState: () => Promise.resolve(uiState()),
+      updateSetting: () => {},
+      updateRule: () => {},
+      refresh: () => {},
+      quit: () => {},
+      showHistory: () => {}
+    }
+  });
+  const hubUrl = document.querySelector('#hubUrl');
+  const token = document.querySelector('#token');
+  const ignoreUnknown = document.querySelector('#ignoreUnknownSource');
+  const ignoredPatterns = document.querySelector('#ignoredSourcePatterns');
+
+  hubUrl.value = 'http://draft-hub:8787';
+  token.value = 'draft-token';
+  ignoredPatterns.value = 'Draft Writer';
+  ignoreUnknown.checked = true;
+  await hubUrl.dispatch('input');
+  await token.dispatch('input');
+  await ignoredPatterns.dispatch('input');
+  await ignoreUnknown.dispatch('change');
+
+  stateListener(
+    uiState({
+      status: { state: 'connected' },
+      settings: {
+        ...uiState().settings,
+        hubUrl: 'http://server-refresh:8787',
+        ignoreUnknownSource: false,
+        ignoredSourcePatterns: ['Server Rule']
+      }
+    })
+  );
+
+  assert.equal(document.querySelector('#status').textContent, '已连接');
+  assert.equal(hubUrl.value, 'http://draft-hub:8787');
+  assert.equal(token.value, 'draft-token');
+  assert.equal(ignoreUnknown.checked, true);
+  assert.equal(ignoredPatterns.value, 'Draft Writer');
+});
+
+test('ui renderer does not replace a focused connection field before it is edited', async () => {
+  let stateListener;
+  const document = await runRenderer('ui-renderer.js', {
+    ids: MAIN_UI_IDS,
+    clipboardSync: {
+      platform: 'darwin',
+      onState: (listener) => {
+        stateListener = listener;
+      },
+      getState: () => Promise.resolve(uiState()),
+      updateSetting: () => {},
+      updateRule: () => {},
+      refresh: () => {},
+      quit: () => {},
+      showHistory: () => {}
+    }
+  });
+  const hubUrl = document.querySelector('#hubUrl');
+  document.activeElement = hubUrl;
+
+  stateListener(
+    uiState({
+      settings: {
+        ...uiState().settings,
+        hubUrl: 'http://server-refresh:8787'
+      }
+    })
+  );
+
+  assert.equal(hubUrl.value, 'http://192.0.2.10:8787');
+});
+
+
+async function draftHarness(updateSetting, platform = 'win32') {
+  const h = { calls: [] };
+  h.document = await runRenderer('ui-renderer.js', {
+    ids: MAIN_UI_IDS,
+    clipboardSync: {
+      platform, onState: listener => { h.publish = listener; },
+      getState: () => Promise.resolve(uiState()),
+      updateSetting: patch => { h.calls.push(plain(patch)); return updateSetting(patch); },
+      updateRule() {}, refresh() {}, quit() {}, showHistory() {}
+    }
+  });
+  h.el = id => h.document.querySelector(`#${id}`);
+  h.edit = async (id, value) => { h.el(id).value = value; await h.el(id).dispatch('input'); };
+  return h;
+}
+function savedState(settings = {}, extra = {}) {
+  return uiState({ settings: { ...uiState().settings, ...settings }, settingsSaved: true, ...extra });
+}
+const draftDeferred = () => {
+  let resolve, reject;
+  const promise = new Promise((a, b) => { resolve = a; reject = b; });
+  return { promise, resolve, reject };
+};
+
+test('successful connection save clears only its accepted draft and preserves newer live status', async () => {
+  const pending = draftDeferred(); const h = await draftHarness(() => pending.promise);
+  await h.edit('hubUrl', 'http://draft.example/'); await h.edit('token', 'test-only-token');
+  const saving = h.el('saveConnection').dispatch('click');
+  h.publish(savedState({ hubUrl: 'http://draft.example' }, { status: { state: 'connected' } }));
+  assert.equal(h.el('token').value, 'test-only-token');
+  pending.resolve(savedState({ hubUrl: 'http://draft.example' })); await saving;
+  assert.equal(h.el('hubUrl').value, 'http://draft.example'); assert.equal(h.el('token').value, '');
+  assert.equal(h.el('status').textContent, '已连接');
+  h.publish(savedState({ hubUrl: 'http://later.example' })); assert.equal(h.el('hubUrl').value, 'http://later.example');
+});
+
+for (const result of ['rejection', 'not-saved']) {
+  test(`failed connection save (${result}) retains the complete draft`, async () => {
+    const h = await draftHarness(() => result === 'rejection' ? Promise.reject(Error('IPC unavailable')) : savedState({}, { settingsSaved: false, status: {} }));
+    await h.edit('hubUrl', 'http://draft.example'); await h.edit('token', 'test-only-token');
+    await h.el('saveConnection').dispatch('click');
+    assert.equal(h.el('status').textContent, result === 'rejection' ? '设置未保存，请检查后重试 · IPC unavailable' : '设置未保存，请检查后重试');
+    h.publish(uiState());
+    assert.equal(h.el('hubUrl').value, 'http://draft.example'); assert.equal(h.el('token').value, 'test-only-token');
+  });
+}
+
+test('connection save completion does not clear edits made while it was pending', async () => {
+  const pending = draftDeferred(); const h = await draftHarness(() => pending.promise);
+  await h.edit('hubUrl', 'http://first.example'); await h.edit('token', 'first-test-token');
+  const saving = h.el('saveConnection').dispatch('click');
+  await h.edit('hubUrl', 'http://second.example'); await h.edit('token', 'second-test-token');
+  pending.resolve(savedState({ hubUrl: 'http://first.example' })); await saving;
+  h.publish(uiState());
+  assert.equal(h.el('hubUrl').value, 'http://second.example'); assert.equal(h.el('token').value, 'second-test-token');
+});
+
+test('out-of-order connection save responses cannot undo the latest completed save', async () => {
+  const first = draftDeferred(), second = draftDeferred(); let calls = 0;
+  const h = await draftHarness(() => (++calls === 1 ? first : second).promise);
+  await h.edit('hubUrl', 'http://first.example'); const a = h.el('saveConnection').dispatch('click');
+  await h.edit('hubUrl', 'http://second.example'); const b = h.el('saveConnection').dispatch('click');
+  second.resolve(savedState({ hubUrl: 'http://second.example' })); await b;
+  first.resolve(savedState({ hubUrl: 'http://first.example' })); await a;
+  assert.equal(h.el('hubUrl').value, 'http://second.example');
+});
+
+test('saved ignore settings use normalized results and allow subsequent external refreshes', async () => {
+  const h = await draftHarness(() => savedState({ ignoredSourcePatterns: ['Editor'], ignoreUnknownSource: true }));
+  await h.edit('ignoredSourcePatterns', ' Editor \n'); h.el('ignoreUnknownSource').checked = true; await h.el('ignoreUnknownSource').dispatch('change');
+  await h.el('saveIgnore').dispatch('click');
+  assert.deepEqual(h.calls, [{ ignoredSourcePatterns: ['Editor'], ignoreUnknownSource: true }]);
+  assert.equal(h.el('ignoredSourcePatterns').value, 'Editor');
+  h.publish(uiState()); assert.equal(h.el('ignoredSourcePatterns').value, 'Voice Input');
+});
+
+for (const result of ['rejection', 'not-saved']) {
+  test(`failed ignore save (${result}) keeps unsaved rules across status refreshes`, async () => {
+    const h = await draftHarness(() => result === 'rejection' ? Promise.reject(Error('IPC unavailable')) : savedState({}, { settingsSaved: false }));
+    await h.edit('ignoredSourcePatterns', 'Unsaved Editor'); h.el('ignoreUnknownSource').checked = true; await h.el('ignoreUnknownSource').dispatch('change');
+    await h.el('saveIgnore').dispatch('click'); h.publish(uiState());
+    assert.equal(h.el('ignoredSourcePatterns').value, 'Unsaved Editor'); assert.equal(h.el('ignoreUnknownSource').checked, true);
+  });
+}
+
+test('ignore save does not consume new edits or overwrite an unrelated connection draft', async () => {
+  const pending = draftDeferred(); const h = await draftHarness(() => pending.promise);
+  await h.edit('hubUrl', 'http://unsaved.example'); await h.edit('ignoredSourcePatterns', 'First Editor');
+  const saving = h.el('saveIgnore').dispatch('click');
+  await h.edit('ignoredSourcePatterns', 'Second Editor');
+  pending.resolve(savedState({ ignoredSourcePatterns: ['First Editor'] })); await saving; h.publish(uiState());
+  assert.equal(h.el('ignoredSourcePatterns').value, 'Second Editor'); assert.equal(h.el('hubUrl').value, 'http://unsaved.example');
+});
+
+test('adding a recent source saves the other pending ignore edits as one form', async () => {
+  const h = await draftHarness(patch => savedState(patch));
+  h.publish(uiState({ recentSources: [{ pattern: 'Source App', label: 'Source App' }] }));
+  await h.edit('ignoredSourcePatterns', 'Unsaved Editor'); h.el('ignoreUnknownSource').checked = true; await h.el('ignoreUnknownSource').dispatch('change');
+  await h.el('recentSources').children[0].children[1].dispatch('click');
+  assert.deepEqual(h.calls, [{ ignoreUnknownSource: true, ignoredSourcePatterns: ['Unsaved Editor', 'Source App'] }]);
+});
+
+test('unmodified unfocused form still follows external settings broadcasts', async () => {
+  const h = await draftHarness(() => {});
+  h.publish(savedState({ hubUrl: 'http://external.example', ignoredSourcePatterns: ['External Editor'], ignoreUnknownSource: true }));
+  assert.equal(h.el('hubUrl').value, 'http://external.example'); assert.equal(h.el('ignoredSourcePatterns').value, 'External Editor');
+});
+
+for (const [button, failure] of [
+  ['saveConnection', { state: 'invalid-hub-url', message: 'Hub 地址必须是 http 或 https' }],
+  ['saveConnection', { state: 'config-error', message: 'EACCES: permission denied' }],
+  ['saveIgnore', { state: 'config-error', message: 'ENOSPC: no space left on device' }]
+]) {
+  test(`${button} retains the specific save error after its state broadcast`, async () => {
+    let h;
+    h = await draftHarness(() => {
+      const failed = savedState({}, { settingsSaved: false, status: failure });
+      h.publish(failed);
+      return failed;
+    });
+    await h.edit('hubUrl', 'ftp://draft.example');
+    await h.edit('token', 'test-only-draft');
+    await h.edit('ignoredSourcePatterns', 'Unsaved Editor');
+    await h.el(button).dispatch('click');
+    assert.equal(h.el('status').textContent, `设置未保存，请检查后重试 · ${failure.message}`);
+    assert.equal(h.el('status').title, failure.message);
+    assert.equal(h.el('token').value, 'test-only-draft');
+    assert.equal(h.el('ignoredSourcePatterns').value, 'Unsaved Editor');
+  });
+}
+
+test('ignore save IPC rejection shows its reason without discarding the draft', async () => {
+  const h = await draftHarness(() => Promise.reject(Error('IPC unavailable')));
+  await h.edit('ignoredSourcePatterns', 'Unsaved Editor');
+  await h.el('saveIgnore').dispatch('click');
+  assert.equal(h.el('status').textContent, '设置未保存，请检查后重试 · IPC unavailable');
+  assert.equal(h.el('status').title, 'IPC unavailable');
+  assert.equal(h.el('ignoredSourcePatterns').value, 'Unsaved Editor');
+});
+
+test('an obsolete save failure cannot replace a newer successful result', async () => {
+  const first = draftDeferred(), second = draftDeferred(); let calls = 0;
+  const h = await draftHarness(() => (++calls === 1 ? first : second).promise);
+  await h.edit('hubUrl', 'http://first.example'); const a = h.el('saveConnection').dispatch('click');
+  await h.edit('hubUrl', 'http://second.example'); const b = h.el('saveConnection').dispatch('click');
+  h.publish(savedState({ hubUrl: 'http://second.example' }, { status: { state: 'connected' } }));
+  second.resolve(savedState({ hubUrl: 'http://second.example' })); await b;
+  first.reject(Error('obsolete IPC failure')); await a;
+  assert.equal(h.el('status').textContent, '已连接');
+  assert.equal(h.el('hubUrl').value, 'http://second.example');
 });

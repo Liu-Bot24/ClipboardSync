@@ -724,3 +724,14 @@ for (const image of [false, true]) test(`real Hub stores two distinct B copies a
   assert.ok(history.every((event) => event.sha256 === b.hash));
   assert.notEqual(history[0].clientEventId, history[1].clientEventId);
 });
+
+test('settings result explicitly distinguishes failed validation, persistence failure and accepted save', async t => {
+  const h = harness(t);
+  assert.equal((await h.update({ hubUrl: 'http://[' })).settingsSaved, false);
+  h.store.save = async () => { throw Error('disk full'); };
+  assert.equal((await h.update({ hubUrl: 'http://new.example' })).settingsSaved, false);
+  assert.equal(h.store.get().hubUrl, 'http://old.example');
+  h.store.save = async () => {};
+  assert.equal((await h.update({ hubUrl: 'http://new.example' })).settingsSaved, true);
+  assert.equal(h.store.get().hubUrl, 'http://new.example');
+});

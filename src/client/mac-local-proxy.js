@@ -179,7 +179,22 @@ export class MacLocalProxy {
 }
 
 export class MacLocalProxyManager {
-  constructor({ resourcesPath, userDataPath, ...options }) {
+  constructor({
+    resourcesPath, userDataPath, now = Date.now,
+    retryBaseMs = 1_000, retryMaxMs = 30_000,
+    setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout,
+    ...options
+  }) {
+    this.now = now;
+    this.retryBaseMs = retryBaseMs;
+    this.retryMaxMs = retryMaxMs;
+    this.setTimeoutImpl = setTimeoutImpl;
+    this.clearTimeoutImpl = clearTimeoutImpl;
+    this.retryTimer = null;
+    this.retryAttempt = 0;
+    this.revision = 0;
+    this.desiredTargetUrl = '';
+    this.unwatchExit = null;
     this.proxy = new MacLocalProxy({
       ...options,
       executablePath: join(resourcesPath, 'local-hub-proxy'),
@@ -188,19 +203,77 @@ export class MacLocalProxyManager {
   }
 
   async sync(settings) {
+    // Validate before retiring the currently working connection.
     const targetUrl = macLocalProxyTargetUrl(settings.hubUrl);
+    const revision = ++this.revision;
+    this.clearRecovery();
+    if (targetUrl !== this.desiredTargetUrl) this.retryAttempt = 0;
+    this.desiredTargetUrl = targetUrl;
     if (!targetUrl) {
-      this.proxy.stop();
+      await this.proxy.stop();
       return settings;
     }
     if (!this.proxy.isAvailable()) {
       return settings;
     }
+    // Initial failures still reach the caller. Only an established proxy is recovered.
     const active = await this.proxy.ensureForHubUrl(targetUrl);
+    if (active && revision === this.revision) this.watchExit(revision);
     return hubSettingsForMacProxy(settings, active);
   }
 
+  watchExit(revision) {
+    this.unwatchExit?.();
+    this.unwatchExit = null;
+    const child = this.proxy.child;
+    if (!child || child.exitCode !== null) {
+      this.scheduleRecovery(revision);
+      return;
+    }
+    const startedAt = this.now();
+    const onExit = () => {
+      if (revision !== this.revision) return;
+      this.unwatchExit?.();
+      this.unwatchExit = null;
+      if (this.now() - startedAt >= 30_000) this.retryAttempt = 0;
+      this.scheduleRecovery(revision);
+    };
+    // Recover only after exit, never from an error event while a process may still live.
+    child.once('exit', onExit);
+    this.unwatchExit = () => child.off('exit', onExit);
+  }
+
+  scheduleRecovery(revision) {
+    if (revision !== this.revision || this.retryTimer || !this.desiredTargetUrl || !this.proxy.isAvailable()) return;
+    const delay = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** Math.min(this.retryAttempt++, 10));
+    const timer = this.setTimeoutImpl(async () => {
+      if (this.retryTimer !== timer || revision !== this.revision) return;
+      this.retryTimer = null;
+      try {
+        const active = await this.proxy.ensureForHubUrl(this.desiredTargetUrl);
+        if (revision !== this.revision) return;
+        if (active) this.watchExit(revision);
+        else this.scheduleRecovery(revision);
+      } catch {
+        // The connection stays disconnected while the bounded retry backs off.
+        this.scheduleRecovery(revision);
+      }
+    }, delay);
+    this.retryTimer = timer;
+    timer.unref?.();
+  }
+
+  clearRecovery() {
+    if (this.retryTimer) this.clearTimeoutImpl(this.retryTimer);
+    this.retryTimer = null;
+    this.unwatchExit?.();
+    this.unwatchExit = null;
+  }
+
   stop() {
-    this.proxy.stop();
+    this.revision += 1;
+    this.desiredTargetUrl = '';
+    this.clearRecovery();
+    return this.proxy.stop();
   }
 }

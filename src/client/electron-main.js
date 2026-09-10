@@ -618,7 +618,7 @@ async function applySettingsPatch(patch) {
       normalizedPatch.hubUrl = normalizeHubUrl(normalizedPatch.hubUrl);
     } catch (error) {
       setStatus({ state: 'invalid-hub-url', message: error.message });
-      return stateForUi();
+      return { ...stateForUi(), settingsSaved: false };
     }
   }
   if ('ignoredSourcePatterns' in normalizedPatch) {
@@ -633,7 +633,7 @@ async function applySettingsPatch(patch) {
     settings = await configStore.update(normalizedPatch);
   } catch (error) {
     setStatus({ state: 'config-error', message: error.message });
-    return stateForUi();
+    return { ...stateForUi(), settingsSaved: false };
   }
   const changesSyncPolicy = ['pauseSend', 'pauseReceive', 'deviceRules', 'deviceRulesByIp',
     'ignoreUnknownSource', 'ignoredSourcePatterns', 'maxSendBytes', 'hubUrl', 'token', 'deviceId']
@@ -666,7 +666,7 @@ async function applySettingsPatch(patch) {
       if (identityChanged || syncService?.stopped) syncService?.start();
     }
   }
-  return stateForUi();
+  return { ...stateForUi(), settingsSaved: true };
 }
 
 async function updateRule(deviceId, column, checked) {

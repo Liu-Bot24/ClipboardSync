@@ -48,6 +48,7 @@
         server: '服务器',
         token: '令牌（可选）',
         tokenConfigured: '已配置，留空不改',
+        saveFailed: '设置未保存，请检查后重试',
         tokenEmpty: '未配置，可留空'
       },
       ignore: {
@@ -124,6 +125,7 @@
         server: 'Server',
         token: 'Token (optional)',
         tokenConfigured: 'Configured; leave blank to keep',
+        saveFailed: 'Settings were not saved. Check them and try again.',
         tokenEmpty: 'Not configured; can be empty'
       },
       ignore: {

@@ -1,5 +1,11 @@
 let currentState = null;
 let currentLanguage = 'zh-CN';
+let connectionFormDirty = false;
+let connectionEditVersion = 0;
+let connectionSaveVersion = 0;
+let ignoreFormDirty = false;
+let ignoreEditVersion = 0;
+let ignoreSaveVersion = 0;
 const i18n = window.ClipboardSyncI18n;
 
 const statusEl = document.querySelector('#status');
@@ -148,6 +154,69 @@ function ignoredSourcePatterns() {
     .filter(Boolean);
 }
 
+function markConnectionFormDirty() {
+  connectionFormDirty = true;
+  connectionEditVersion += 1;
+}
+
+function markIgnoreFormDirty() {
+  ignoreFormDirty = true;
+  ignoreEditVersion += 1;
+}
+
+function showSaveFailure(message) {
+  const reason = typeof message === 'string' ? message.trim() : '';
+  const label = tr('connection.saveFailed');
+  statusEl.textContent = reason ? `${label} · ${reason}` : label;
+  statusEl.title = reason;
+}
+
+async function saveConnectionSettings() {
+  const editVersion = connectionEditVersion;
+  const saveVersion = ++connectionSaveVersion;
+  connectionFormDirty = true;
+  const patch = { hubUrl: hubUrlEl.value.trim() };
+  if (tokenEl.value.length > 0) patch.token = tokenEl.value;
+  let result;
+  try {
+    result = await window.clipboardSync.updateSetting(patch);
+  } catch (error) {
+    if (saveVersion === connectionSaveVersion) showSaveFailure(error?.message);
+    return;
+  }
+  if (saveVersion !== connectionSaveVersion || editVersion !== connectionEditVersion) return;
+  if (result?.settingsSaved !== true) {
+    showSaveFailure(result?.status?.message);
+    return;
+  }
+  connectionFormDirty = false;
+  hubUrlEl.value = result.settings.hubUrl;
+  tokenEl.value = '';
+  // Apply only this form: newer device/status broadcasts must not be rolled back.
+  tokenEl.placeholder = result.settings.hasToken ? tr('connection.tokenConfigured') : tr('connection.tokenEmpty');
+}
+
+async function saveIgnoreSettings(patch) {
+  const editVersion = ignoreEditVersion;
+  const saveVersion = ++ignoreSaveVersion;
+  ignoreFormDirty = true;
+  let result;
+  try {
+    result = await window.clipboardSync.updateSetting(patch);
+  } catch (error) {
+    if (saveVersion === ignoreSaveVersion) showSaveFailure(error?.message);
+    return;
+  }
+  if (saveVersion !== ignoreSaveVersion || editVersion !== ignoreEditVersion) return;
+  if (result?.settingsSaved !== true) {
+    showSaveFailure(result?.status?.message);
+    return;
+  }
+  ignoreFormDirty = false;
+  ignoreUnknownSourceEl.checked = Boolean(result.settings.ignoreUnknownSource);
+  ignoredSourcePatternsEl.value = (result.settings.ignoredSourcePatterns || []).join('\n');
+}
+
 function renderRecentSources() {
   recentSourcesEl.replaceChildren();
   const sources = currentState.recentSources || [];
@@ -178,17 +247,19 @@ function renderRecentSources() {
     add.className = 'source-add-button';
     add.textContent = source.unknown ? tr('action.ignore') : tr('action.add');
     add.disabled = !source.pattern && !source.unknown;
-    add.addEventListener('click', () => {
+    add.addEventListener('click', async () => {
       if (source.unknown) {
         ignoreUnknownSourceEl.checked = true;
-        window.clipboardSync.updateSetting({ ignoreUnknownSource: true });
+        markIgnoreFormDirty();
+        await saveIgnoreSettings({ ignoreUnknownSource: true, ignoredSourcePatterns: ignoredSourcePatterns() });
         return;
       }
       const existing = ignoredSourcePatterns();
       const exists = existing.some((item) => item.toLowerCase() === source.pattern.toLowerCase());
       const next = exists ? existing : [...existing, source.pattern];
       ignoredSourcePatternsEl.value = next.join('\n');
-      window.clipboardSync.updateSetting({ ignoredSourcePatterns: next });
+      markIgnoreFormDirty();
+      await saveIgnoreSettings({ ignoreUnknownSource: ignoreUnknownSourceEl.checked, ignoredSourcePatterns: next });
     });
 
     row.append(text, add);
@@ -205,11 +276,15 @@ function render(state) {
   pauseSendEl.checked = state.settings.pauseSend;
   pauseReceiveEl.checked = state.settings.pauseReceive;
   autoLaunchEl.checked = state.settings.autoLaunch;
-  hubUrlEl.value = state.settings.hubUrl;
-  tokenEl.value = '';
+  if (!connectionFormDirty && document.activeElement !== hubUrlEl && document.activeElement !== tokenEl) {
+    hubUrlEl.value = state.settings.hubUrl;
+    tokenEl.value = '';
+  }
   tokenEl.placeholder = state.settings.hasToken ? tr('connection.tokenConfigured') : tr('connection.tokenEmpty');
-  ignoreUnknownSourceEl.checked = Boolean(state.settings.ignoreUnknownSource);
-  ignoredSourcePatternsEl.value = (state.settings.ignoredSourcePatterns || []).join('\n');
+  if (!ignoreFormDirty && document.activeElement !== ignoreUnknownSourceEl && document.activeElement !== ignoredSourcePatternsEl) {
+    ignoreUnknownSourceEl.checked = Boolean(state.settings.ignoreUnknownSource);
+    ignoredSourcePatternsEl.value = (state.settings.ignoredSourcePatterns || []).join('\n');
+  }
   const sourceSupported = state.capabilities?.clipboardSource !== false;
   ignoreUnknownSourceEl.disabled = !sourceSupported;
   ignoredSourcePatternsEl.disabled = !sourceSupported;
@@ -232,19 +307,15 @@ if (window.clipboardSync.platform !== 'darwin') {
   historyButtonEl.hidden = false;
   historyButtonEl.addEventListener('click', () => window.clipboardSync.showHistory());
 }
-document.querySelector('#saveConnection').addEventListener('click', () => {
-  const patch = { hubUrl: hubUrlEl.value.trim() };
-  if (tokenEl.value.length > 0) {
-    patch.token = tokenEl.value;
-  }
-  window.clipboardSync.updateSetting(patch);
-});
-saveIgnoreEl.addEventListener('click', () => {
-  window.clipboardSync.updateSetting({
-    ignoreUnknownSource: ignoreUnknownSourceEl.checked,
-    ignoredSourcePatterns: ignoredSourcePatterns()
-  });
-});
+hubUrlEl.addEventListener('input', markConnectionFormDirty);
+tokenEl.addEventListener('input', markConnectionFormDirty);
+ignoreUnknownSourceEl.addEventListener('change', markIgnoreFormDirty);
+ignoredSourcePatternsEl.addEventListener('input', markIgnoreFormDirty);
+document.querySelector('#saveConnection').addEventListener('click', saveConnectionSettings);
+saveIgnoreEl.addEventListener('click', () => saveIgnoreSettings({
+  ignoreUnknownSource: ignoreUnknownSourceEl.checked,
+  ignoredSourcePatterns: ignoredSourcePatterns()
+}));
 document.querySelector('#refresh').addEventListener('click', () => window.clipboardSync.refresh());
 document.querySelector('#quit').addEventListener('click', () => window.clipboardSync.quit());
 
