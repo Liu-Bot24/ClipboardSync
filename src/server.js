@@ -111,7 +111,7 @@ export function sendSocketJson(ws, body, maxBufferedBytes = 64 * 1024 * 1024) {
 
 export async function createClipboardHubServer(config) {
   config = {
-    maxHistoryEntries: 100,
+    maxHistoryEntries: 150,
     historyDisplayLimit: 30,
     maxPayloadBytes: 33_554_432,
     duplicateContentWindowMs: 30_000,

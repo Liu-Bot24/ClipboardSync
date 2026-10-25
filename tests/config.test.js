@@ -21,7 +21,7 @@ test('readConfig returns defaults with a token', () => {
     port: 8787,
     historyPath: '/data/history.jsonl',
     maxPayloadBytes: 33_554_432,
-    maxHistoryEntries: 100,
+    maxHistoryEntries: 150,
     historyDisplayLimit: 30,
     maxHistoryBytes: 1_073_741_824,
     maxHistoryAgeMs: 604_800_000,

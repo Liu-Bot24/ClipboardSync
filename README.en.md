@@ -13,7 +13,7 @@ ClipboardSync is a self-hosted LAN clipboard sharing tool. Run the Hub on a NAS,
 - Connect multiple macOS / Windows devices to the same Hub.
 - Copy text, links, code snippets, images, or screenshots on one device, then paste directly on another connected device.
 - Show devices by IP, with `Send` / `Receive` enabled by default and configurable per device.
-- Keep the latest 100 history items by default and show the latest 30 in clients by default. Both values are configured on the Hub.
+- Keep the latest 150 history items by default and show the latest 30 in clients by default. Both values are configured on the Hub.
 - Selecting a history item pastes into the current target when possible, or writes it to the local clipboard when no input target is available.
 - Support `Pause Sending`, `Pause Receiving`, `Launch at Login`, `Always on Top`, and `Clear Global History`.
 - On Windows, ignore local copy sources by app name, process name, or window title, including unknown sources. Source detection and filtering are currently unavailable on macOS.
@@ -61,7 +61,7 @@ CLIPBOARD_HUB_BIND_IP=0.0.0.0
 CLIPBOARD_HUB_HOST=0.0.0.0
 CLIPBOARD_HUB_PORT=8787
 CLIPBOARD_HUB_HISTORY_PATH=/data/history.jsonl
-CLIPBOARD_HUB_MAX_HISTORY_ENTRIES=100
+CLIPBOARD_HUB_MAX_HISTORY_ENTRIES=150
 CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT=30
 CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS=30000
 ```
@@ -79,7 +79,7 @@ services:
       CLIPBOARD_HUB_HOST: "${CLIPBOARD_HUB_HOST:-0.0.0.0}"
       CLIPBOARD_HUB_PORT: "${CLIPBOARD_HUB_PORT:-8787}"
       CLIPBOARD_HUB_HISTORY_PATH: "${CLIPBOARD_HUB_HISTORY_PATH:-/data/history.jsonl}"
-      CLIPBOARD_HUB_MAX_HISTORY_ENTRIES: "${CLIPBOARD_HUB_MAX_HISTORY_ENTRIES:-100}"
+      CLIPBOARD_HUB_MAX_HISTORY_ENTRIES: "${CLIPBOARD_HUB_MAX_HISTORY_ENTRIES:-150}"
       CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT: "${CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT:-30}"
       CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS: "${CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS:-30000}"
     ports:
@@ -107,7 +107,7 @@ docker run -d \
   -e CLIPBOARD_HUB_HOST=0.0.0.0 \
   -e CLIPBOARD_HUB_PORT=8787 \
   -e CLIPBOARD_HUB_HISTORY_PATH=/data/history.jsonl \
-  -e CLIPBOARD_HUB_MAX_HISTORY_ENTRIES=100 \
+  -e CLIPBOARD_HUB_MAX_HISTORY_ENTRIES=150 \
   -e CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT=30 \
   -e CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS=30000 \
   -v "$PWD/data:/data" \

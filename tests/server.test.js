@@ -127,7 +127,7 @@ test('GET /v1/config returns Hub client settings with auth', async () => {
       type: 'hub.config',
       receiverPolicyRevision: true,
       historyDisplayLimit: 30,
-      maxHistoryEntries: 100
+      maxHistoryEntries: 150
     });
   });
 });

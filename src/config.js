@@ -52,7 +52,7 @@ export function readConfig(env = process.env) {
     maxPayloadBytes,
     maxHistoryEntries: env.CLIPBOARD_HUB_MAX_HISTORY_ENTRIES
       ? parsePositiveInteger(env.CLIPBOARD_HUB_MAX_HISTORY_ENTRIES, 'CLIPBOARD_HUB_MAX_HISTORY_ENTRIES')
-      : 100,
+      : 150,
     historyDisplayLimit: env.CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT
       ? parsePositiveInteger(env.CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT, 'CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT')
       : 30,

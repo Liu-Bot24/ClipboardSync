@@ -13,7 +13,7 @@ ClipboardSync 是一个自托管的局域网剪贴板共享工具。你可以把
 - 支持多台 macOS / Windows 设备连接同一个 Hub。
 - 在一台设备复制文本、链接、代码片段、图片或截图后，可以直接在另一台已连接设备粘贴。
 - 设备按 IP 显示，`发送` / `接收` 默认开启，可按设备单独控制。
-- Hub 默认保留最近 100 条历史，客户端默认显示最近 30 条；这两个数量都可以在 Hub 配置里调整。
+- Hub 默认保留最近 150 条历史，客户端默认显示最近 30 条；这两个数量都可以在 Hub 配置里调整。
 - 点击历史时，有输入目标就直接粘贴，没有输入目标就写入本机剪贴板。
 - 支持 `暂停发送`、`暂停接收`、`开机启动`、`总在最前` 和 `清除全局历史`。
 - Windows 支持按应用名、进程名或窗口标题忽略本机复制来源，也可忽略未知来源。macOS 暂不支持来源识别，对应筛选不可用。
@@ -61,7 +61,7 @@ CLIPBOARD_HUB_BIND_IP=0.0.0.0
 CLIPBOARD_HUB_HOST=0.0.0.0
 CLIPBOARD_HUB_PORT=8787
 CLIPBOARD_HUB_HISTORY_PATH=/data/history.jsonl
-CLIPBOARD_HUB_MAX_HISTORY_ENTRIES=100
+CLIPBOARD_HUB_MAX_HISTORY_ENTRIES=150
 CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT=30
 CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS=30000
 ```
@@ -79,7 +79,7 @@ services:
       CLIPBOARD_HUB_HOST: "${CLIPBOARD_HUB_HOST:-0.0.0.0}"
       CLIPBOARD_HUB_PORT: "${CLIPBOARD_HUB_PORT:-8787}"
       CLIPBOARD_HUB_HISTORY_PATH: "${CLIPBOARD_HUB_HISTORY_PATH:-/data/history.jsonl}"
-      CLIPBOARD_HUB_MAX_HISTORY_ENTRIES: "${CLIPBOARD_HUB_MAX_HISTORY_ENTRIES:-100}"
+      CLIPBOARD_HUB_MAX_HISTORY_ENTRIES: "${CLIPBOARD_HUB_MAX_HISTORY_ENTRIES:-150}"
       CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT: "${CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT:-30}"
       CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS: "${CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS:-30000}"
     ports:
@@ -107,7 +107,7 @@ docker run -d \
   -e CLIPBOARD_HUB_HOST=0.0.0.0 \
   -e CLIPBOARD_HUB_PORT=8787 \
   -e CLIPBOARD_HUB_HISTORY_PATH=/data/history.jsonl \
-  -e CLIPBOARD_HUB_MAX_HISTORY_ENTRIES=100 \
+  -e CLIPBOARD_HUB_MAX_HISTORY_ENTRIES=150 \
   -e CLIPBOARD_HUB_HISTORY_DISPLAY_LIMIT=30 \
   -e CLIPBOARD_HUB_DUPLICATE_CONTENT_WINDOW_MS=30000 \
   -v "$PWD/data:/data" \
