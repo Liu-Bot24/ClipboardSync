@@ -31,7 +31,7 @@ test('HubClient sendClipboard returns false instead of throwing when websocket s
   assert.deepEqual(statuses, [{ state: 'connection-error', message: 'socket is gone' }]);
 });
 
-test('HubClient stops reconnecting when the Hub rejects a duplicate device id', async () => {
+test('HubClient reports a duplicate device id and retries only after the slow duplicate delay', async () => {
   class FakeWebSocket extends EventEmitter {
     static instances = [];
 
@@ -52,7 +52,7 @@ test('HubClient stops reconnecting when the Hub rejects a duplicate device id', 
       deviceId: 'macbook',
       deviceName: 'MacBook'
     }),
-    { WebSocketImpl: FakeWebSocket, reconnectMs: 1 }
+    { WebSocketImpl: FakeWebSocket, reconnectMs: 1, duplicateRetryMs: 100 }
   );
   const statuses = [];
   hub.on('status', (status) => statuses.push(status));
@@ -63,6 +63,10 @@ test('HubClient stops reconnecting when the Hub rejects a duplicate device id', 
 
   assert.deepEqual(statuses, [{ state: 'duplicate-device', message: 'device replaced' }]);
   assert.equal(FakeWebSocket.instances.length, 1);
+
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(FakeWebSocket.instances.length, 2);
+  hub.stop();
 });
 
 test('HubClient connects in LAN mode without a token', () => {

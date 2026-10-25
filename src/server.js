@@ -115,6 +115,7 @@ export async function createClipboardHubServer(config) {
     historyDisplayLimit: 30,
     maxPayloadBytes: 33_554_432,
     duplicateContentWindowMs: 30_000,
+    replacementProofMs: 10_000,
     maxQueuedEntries: 256,
     maxQueuedBytes: 128 * 1024 * 1024,
     heartbeatMs: 30_000,
@@ -132,6 +133,7 @@ export async function createClipboardHubServer(config) {
   });
   const clients = new Map();
   const clientsByDeviceId = new Map();
+  const pendingClients = new Set();
   const receiverPoliciesByDeviceId = new Map();
   const wss = new WebSocketServer({ noServer: true, maxPayload: maxWebSocketMessageBytes(config.maxPayloadBytes) });
   let heartbeat = null;
@@ -270,17 +272,40 @@ export async function createClipboardHubServer(config) {
   wss.on('connection', (ws, _request, clientInfo) => {
     ws.on('error', () => ws.terminate());
     ws.isAlive = true;
-    ws.on('pong', () => { ws.isAlive = true; });
-    const existing = clientsByDeviceId.get(clientInfo.deviceId);
-    if (existing && existing !== ws) {
-      clients.delete(existing);
-      existing.close(4000, 'device replaced');
+    let registered = false;
+    let proofTimer = null;
+
+    // A relay can deliver an upgrade its client already abandoned. Replace a
+    // live connection for the same device only after the newcomer proves it
+    // is alive, so a stale handshake cannot evict the current one.
+    function register() {
+      if (registered || ws.readyState !== ws.OPEN) return;
+      registered = true;
+      clearTimeout(proofTimer);
+      pendingClients.delete(ws);
+      const existing = clientsByDeviceId.get(clientInfo.deviceId);
+      if (existing && existing !== ws) {
+        clients.delete(existing);
+        existing.close(4000, 'device replaced');
+      }
+      clients.set(ws, { ...clientInfo, receiverPolicy: {}, connectedAt: new Date().toISOString() });
+      clientsByDeviceId.set(clientInfo.deviceId, ws);
+      broadcastDevices();
     }
 
-    clients.set(ws, { ...clientInfo, receiverPolicy: {}, connectedAt: new Date().toISOString() });
-    clientsByDeviceId.set(clientInfo.deviceId, ws);
+    ws.on('pong', () => {
+      ws.isAlive = true;
+      register();
+    });
     sendSocketJson(ws, hubConfigPayload(config));
-    broadcastDevices();
+    if (clientsByDeviceId.has(clientInfo.deviceId)) {
+      pendingClients.add(ws);
+      proofTimer = setTimeout(() => ws.terminate(), config.replacementProofMs);
+      proofTimer.unref?.();
+      try { ws.ping(); } catch { ws.terminate(); }
+    } else {
+      register();
+    }
     let controlWindowStarted = Date.now();
     let controlMessages = 0;
 
@@ -307,6 +332,7 @@ export async function createClipboardHubServer(config) {
     }
 
     ws.on('message', async (data) => {
+      register();
       const bytes = data.length;
       let input;
       // Reserve a small synchronous control budget independently of disk-backed work.
@@ -370,6 +396,9 @@ export async function createClipboardHubServer(config) {
     });
 
     ws.on('close', () => {
+      clearTimeout(proofTimer);
+      pendingClients.delete(ws);
+      if (!registered) return;
       clients.delete(ws);
       if (clientsByDeviceId.get(clientInfo.deviceId) === ws) {
         clientsByDeviceId.delete(clientInfo.deviceId);
@@ -402,7 +431,7 @@ export async function createClipboardHubServer(config) {
     async close() {
       clearInterval(heartbeat);
       clearInterval(maintenance);
-      for (const client of clients.keys()) {
+      for (const client of [...clients.keys(), ...pendingClients]) {
         client.terminate();
       }
       await new Promise((resolve, reject) => {

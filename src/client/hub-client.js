@@ -22,6 +22,7 @@ export class HubClient extends EventEmitter {
     super();
     this.settingsProvider = settingsProvider;
     this.reconnectMs = options.reconnectMs ?? 2_000;
+    this.duplicateRetryMs = options.duplicateRetryMs ?? 30_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.WebSocketImpl = options.WebSocketImpl ?? WebSocket;
     this.ws = null;
@@ -181,16 +182,20 @@ export class HubClient extends EventEmitter {
     this.ws.on('close', (code, reason) => {
       if (!current()) return;
       this.retireConnection();
+      let delay;
       if (code === 4000) {
         this.emit('status', {
           state: 'duplicate-device',
           message: reason?.toString?.() || '设备 ID 重复'
         });
-        return;
+        // A stale handshake relayed for this device can also evict us. Retry
+        // slowly so a real duplicate cannot flap while a transient one heals.
+        delay = this.duplicateRetryMs;
+      } else {
+        this.emit('status', { state: 'disconnected' });
+        delay = Math.min(30_000, this.reconnectMs * 2 ** Math.min(this.reconnectAttempts++, 5));
       }
-      this.emit('status', { state: 'disconnected' });
       if (!this.stopped) {
-        const delay = Math.min(30_000, this.reconnectMs * 2 ** Math.min(this.reconnectAttempts++, 5));
         this.reconnectTimer = setTimeout(() => this.connect(), delay * (0.8 + Math.random() * 0.4));
       }
     });

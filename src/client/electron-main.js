@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, screen, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, screen, Tray } from 'electron';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -33,6 +33,7 @@ import { normalizeHubUrl } from './settings-validation.js';
 import { installSingleInstanceGuard } from './single-instance.js';
 import { mergeRecentSourceSuggestions } from './source-suggestions.js';
 import { popupActionFor, shouldHidePopupOnBlur, shouldShowInitialPopup } from './startup-window-policy.js';
+import { StatusTracker } from './status-tracker.js';
 import { ClipboardSyncService } from './sync-service.js';
 import {
   deviceSettingsMenuLabel,
@@ -41,6 +42,7 @@ import {
   languageMenuEntry
 } from './tray-menu-template.js';
 import { trayIconForPlatform } from './tray-icon.js';
+import { WindowsForegroundWatcher } from './windows-foreground-watcher.js';
 import { uiHistoryEvent } from './ui-history-event.js';
 import { createUiLifecycle } from './ui-lifecycle.js';
 import { popupPosition } from './window-position.js';
@@ -77,10 +79,17 @@ let history = [];
 const historyRefresh = new HistoryRefreshController();
 const pasteTargetCapture = new SingleFlightSampler();
 let status = { state: 'starting' };
+const statusTracker = new StatusTracker({
+  onChange: (nextStatus) => {
+    status = nextStatus;
+    broadcastState();
+  }
+});
 let recentSources = [];
 let qaFixtureMode = false;
 let lastExternalPasteTarget = null;
 let pasteTargetSampler = null;
+let windowsWatcher = null;
 let macLocalProxy = null;
 let hubConnectionSettings = null;
 let connectionChangeRevision = 0;
@@ -187,8 +196,7 @@ function broadcastState() {
 }
 
 function setStatus(nextStatus) {
-  status = nextStatus;
-  broadcastState();
+  statusTracker.set(nextStatus);
 }
 
 function applyLoginItemSettings(settings) {
@@ -305,23 +313,35 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function rememberPasteTarget(target) {
+  const action = pasteTargetMemoryAction(target, { isMac, isWindows, ownPid: process.pid });
+  lastExternalPasteTarget = nextPasteTargetMemory(lastExternalPasteTarget, target, { isMac, isWindows, ownPid: process.pid });
+  smokeTrace({
+    stage: 'paste-target-capture',
+    action,
+    target: pasteTargetTrace(target),
+    remembered: pasteTargetTrace(lastExternalPasteTarget)
+  });
+  return action === 'update' ? lastExternalPasteTarget : null;
+}
+
+async function readWindowsPasteTarget() {
+  const sample = await windowsWatcher?.request();
+  return sample ? sample.target : readWindowsForegroundTarget();
+}
+
+async function readWindowsClipboardSourceFast() {
+  const sample = await windowsWatcher?.request();
+  return sample ? sample.source : readClipboardSource({ platform: process.platform });
+}
+
 async function captureExternalPasteTarget() {
   if (!isWindows && !isMac) {
     return null;
   }
-  const reader = isWindows ? readWindowsForegroundTarget : readMacForegroundTarget;
+  const reader = isWindows ? readWindowsPasteTarget : readMacForegroundTarget;
   try {
-    return await pasteTargetCapture.sample(reader, (target) => {
-    const action = pasteTargetMemoryAction(target, { isMac, isWindows, ownPid: process.pid });
-    lastExternalPasteTarget = nextPasteTargetMemory(lastExternalPasteTarget, target, { isMac, isWindows, ownPid: process.pid });
-    smokeTrace({
-      stage: 'paste-target-capture',
-      action,
-      target: pasteTargetTrace(target),
-      remembered: pasteTargetTrace(lastExternalPasteTarget)
-    });
-    return action === 'update' ? lastExternalPasteTarget : null;
-    });
+    return await pasteTargetCapture.sample(reader, rememberPasteTarget);
   } catch (error) {
     smokeTrace({ stage: 'paste-target-capture-error', message: error.message });
     return null;
@@ -333,12 +353,19 @@ function rememberExternalPasteTarget() {
 }
 
 function startPasteTargetSampler() {
-  if (pasteTargetSampler || (!isMac && !isWindows)) {
+  if (pasteTargetSampler || windowsWatcher || (!isMac && !isWindows)) {
+    return;
+  }
+  if (isWindows) {
+    windowsWatcher = new WindowsForegroundWatcher();
+    windowsWatcher.on('sample', (sample) => rememberPasteTarget(sample.target));
+    windowsWatcher.on('error', (error) => smokeTrace({ stage: 'windows-watcher-error', message: error.message }));
+    windowsWatcher.start();
     return;
   }
   pasteTargetSampler = setInterval(() => {
     captureExternalPasteTarget();
-  }, isMac ? 900 : 1_200);
+  }, 900);
   pasteTargetSampler.unref?.();
 }
 
@@ -346,6 +373,8 @@ function stopPasteTargetSampler() {
   pasteTargetCapture.invalidate();
   clearInterval(pasteTargetSampler);
   pasteTargetSampler = null;
+  windowsWatcher?.stop();
+  windowsWatcher = null;
 }
 
 async function writeQaDirectPasteResult(result) {
@@ -806,7 +835,7 @@ function installQaFixtureState() {
     };
     return { ...event, sha256: hashEventPayload(event) };
   });
-  status = { state: 'connected' };
+  statusTracker.set({ state: 'connected' });
   recentSources = [
     {
       id: 'processname:dictationhelper',
@@ -911,6 +940,12 @@ async function main() {
     broadcastState();
   });
   hub.on('error', (error) => setStatus({ state: 'connection-error', message: error.message }));
+  // Sockets rarely survive sleep; reconnect now instead of waiting for heartbeats.
+  powerMonitor.on('resume', () => {
+    if (qaFixtureMode) return;
+    smokeTrace({ stage: 'power-resume' });
+    hub.reconnectNow();
+  });
 
   syncService = new ClipboardSyncService({
     clipboard: new ElectronClipboardAdapter(),
@@ -924,7 +959,7 @@ async function main() {
     },
     onTrace: smokeTrace,
     onSourceObserved: isWindows ? rememberClipboardSource : null,
-    sourceProvider: () => readClipboardSource({ platform: process.platform })
+    sourceProvider: () => (isWindows ? readWindowsClipboardSourceFast() : readClipboardSource({ platform: process.platform }))
   });
 
   ipcMain.handle('client:get-state', () => stateForUi());

@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
 #include <pthread.h>
@@ -14,6 +15,11 @@
 #include <unistd.h>
 
 #define BUFFER_SIZE 65536
+/* Shorter than the client's 10s WebSocket handshake timeout, so a request is
+   never forwarded after the client has given up on it. */
+#define CONNECT_TIMEOUT_MS 4000
+
+static pid_t parent_pid;
 
 typedef struct {
   int client_fd;
@@ -139,6 +145,42 @@ static int parse_target_url(const char *url, char *host, size_t host_size, char 
   return 1;
 }
 
+static int connect_with_timeout(int fd, const struct sockaddr *addr, socklen_t addr_len, int timeout_ms) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+    return -1;
+  }
+  if (connect(fd, addr, addr_len) != 0) {
+    if (errno != EINPROGRESS) {
+      return -1;
+    }
+    struct pollfd pending;
+    pending.fd = fd;
+    pending.events = POLLOUT;
+    pending.revents = 0;
+    int ready;
+    do {
+      ready = poll(&pending, 1, timeout_ms);
+    } while (ready < 0 && errno == EINTR);
+    if (ready <= 0) {
+      if (ready == 0) {
+        errno = ETIMEDOUT;
+      }
+      return -1;
+    }
+    int error = 0;
+    socklen_t error_len = sizeof(error);
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &error_len) != 0) {
+      return -1;
+    }
+    if (error != 0) {
+      errno = error;
+      return -1;
+    }
+  }
+  return fcntl(fd, F_SETFL, flags);
+}
+
 static int connect_to_host(const char *host, const char *port) {
   struct addrinfo hints;
   struct addrinfo *result = NULL;
@@ -158,7 +200,7 @@ static int connect_to_host(const char *host, const char *port) {
     if (fd < 0) {
       continue;
     }
-    if (connect(fd, item->ai_addr, item->ai_addrlen) == 0) {
+    if (connect_with_timeout(fd, item->ai_addr, item->ai_addrlen, CONNECT_TIMEOUT_MS) == 0) {
       break;
     }
     close(fd);
@@ -244,6 +286,19 @@ static void *handle_connection(void *arg) {
   return NULL;
 }
 
+/* The app does not always get to stop this process (crash, force quit). An
+   orphan would keep the listen port and block the next launch's proxy. */
+static void *watch_parent(void *arg) {
+  (void)arg;
+  while (1) {
+    sleep(1);
+    if (getppid() != parent_pid) {
+      _exit(0);
+    }
+  }
+  return NULL;
+}
+
 static int create_listener(const char *host, const char *port) {
   struct addrinfo hints;
   struct addrinfo *result = NULL;
@@ -326,6 +381,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  parent_pid = getppid();
+  pthread_t watcher;
+  if (pthread_create(&watcher, NULL, watch_parent, NULL) == 0) {
+    pthread_detach(watcher);
+  }
+
   printf("clipboard local proxy listening on %s:%s -> %s:%s\n", listen_host, listen_port, target_host, target_port);
   fflush(stdout);
 
@@ -336,6 +397,8 @@ int main(int argc, char **argv) {
         continue;
       }
       fprintf(stderr, "accept failed: %s\n", strerror(errno));
+      /* Back off on persistent errors such as EMFILE instead of spinning. */
+      usleep(100000);
       continue;
     }
 

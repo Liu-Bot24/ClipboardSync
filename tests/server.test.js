@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
+import net from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
@@ -616,6 +617,47 @@ test('WebSocket replaces an older connection with the same deviceId', async () =
     await closed;
     assert.equal(first.readyState, first.CLOSED);
 
+    second.close();
+  });
+});
+
+test('WebSocket keeps the live connection when a stale handshake for the same deviceId arrives', async () => {
+  await withServer(async (httpBaseUrl, wsBaseUrl) => {
+    const live = await openSocket(wsBaseUrl, 'macbook');
+    let liveCloseCode = null;
+    live.on('close', (code) => { liveCloseCode = code; });
+
+    // A relay forwards an upgrade its client already abandoned, then closes it.
+    const { port } = new URL(httpBaseUrl);
+    const ghost = net.connect(Number(port), '127.0.0.1', () => {
+      ghost.end(
+        'GET /v1/ws?deviceId=macbook HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
+        'Authorization: Bearer testhubtoken0123456789abcdef012345\r\n' +
+        'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n'
+      );
+    });
+    ghost.on('error', () => {});
+    ghost.resume();
+    await new Promise((resolve) => ghost.once('close', resolve));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(liveCloseCode, null);
+    assert.equal(live.readyState, live.OPEN);
+    const devices = await fetch(`${httpBaseUrl}/v1/devices`, {
+      headers: { Authorization: 'Bearer testhubtoken0123456789abcdef012345' }
+    }).then((response) => response.json());
+    assert.deepEqual(devices.devices.map((device) => device.deviceId), ['macbook']);
+
+    live.close();
+  });
+});
+
+test('WebSocket replacement closes the older connection with code 4000 once the newcomer is alive', async () => {
+  await withServer(async (_httpBaseUrl, wsBaseUrl) => {
+    const first = await openSocket(wsBaseUrl, 'macbook');
+    const closed = new Promise((resolve) => first.once('close', (code) => resolve(code)));
+    const second = await openSocket(wsBaseUrl, 'macbook');
+    assert.equal(await closed, 4000);
     second.close();
   });
 });
