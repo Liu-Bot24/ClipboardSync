@@ -472,7 +472,8 @@ final class AppModel: NSObject, ObservableObject {
     /// First run only: take over the Electron client's Hub URL, token and rules.
     private func importElectronSettings() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        for folder in ["Clipboard Sync", "ClipboardSync"] {
+        // Electron keeps userData under the package name ("clipboard-hub"); the others are fallbacks.
+        for folder in ["clipboard-hub", "Clipboard Sync", "ClipboardSync"] {
             let directory = support.appendingPathComponent(folder, isDirectory: true)
             guard let config = try? Data(contentsOf: directory.appendingPathComponent("config.json")) else { continue }
             let proxy = try? Data(contentsOf: directory.appendingPathComponent("clipboard-sync.proxy.json"))

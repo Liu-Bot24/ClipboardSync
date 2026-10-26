@@ -45,7 +45,7 @@ open build/ClipboardSync.app
 ## 首次启动
 
 - 设置保存在 `~/Library/Application Support/dev.liuqi.clipboardsync.mac/config.json`，Hub 令牌保存在登录钥匙串（服务名 `dev.liuqi.clipboardsync.mac`）。
-- 首次启动时，如果发现 Electron 版设置（`~/Library/Application Support/Clipboard Sync/config.json`），会导入 Hub 地址、令牌、设备名、语言、暂停和收发规则。Electron 版通过本地代理 `127.0.0.1:18787` 连接时，会改用代理配置里的真实 Hub 地址。
+- 首次启动时，如果发现 Electron 版设置（`~/Library/Application Support/clipboard-hub/config.json`，也会查找 `Clipboard Sync/` 和 `ClipboardSync/`），会导入 Hub 地址、令牌、设备名、语言、暂停和收发规则。Electron 版通过本地代理 `127.0.0.1:18787` 连接时，会改用代理配置里的真实 Hub 地址。
 - 原生版使用新的设备 ID，因此和 Electron 版同时运行也不会在 Hub 上互相挤掉。其他设备上按 IP 设置的收发规则会自动应用到新 ID。
 - 切换前请退出 Electron 版，并关闭它的“开机启动”或删除它，避免两个客户端同时同步。
 - 未设置服务器时会自动打开“收发设置”窗口。
