@@ -133,14 +133,14 @@ If you use a NAS container UI, create the container with the same settings:
 
 Download clients from GitHub Releases:
 
-- macOS: [ClipboardSync-mac-universal.dmg](https://github.com/Liu-Bot24/ClipboardSync/releases/latest/download/ClipboardSync-mac-universal.dmg)
+- macOS: [ClipboardSync-mac-arm64.dmg](https://github.com/Liu-Bot24/ClipboardSync/releases/latest/download/ClipboardSync-mac-arm64.dmg)
 - Windows: [ClipboardSync-windows-x64.zip](https://github.com/Liu-Bot24/ClipboardSync/releases/latest/download/ClipboardSync-windows-x64.zip)
 
 ### macOS
 
-The macOS package is a Universal build for Apple Silicon and Intel Mac.
+The macOS package supports Apple Silicon (M-series) Macs only, which makes it about half the size of a Universal build that also contains the Intel version. To build for an Intel Mac, run `CLIPBOARD_SYNC_MAC_ARCH=x64 npm run package:release` on a Mac.
 
-1. Open `ClipboardSync-mac-universal.dmg`.
+1. Open `ClipboardSync-mac-arm64.dmg`.
 2. Drag `ClipboardSync.app` to `Applications`.
 3. Open ClipboardSync from Applications.
 

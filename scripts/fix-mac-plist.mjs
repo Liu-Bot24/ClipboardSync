@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process';
 
-const plist = 'dist/ClipboardSync-darwin-universal/ClipboardSync.app/Contents/Info.plist';
+import { macBuildDirName } from './mac-target.mjs';
+
+const plist = `dist/${macBuildDirName()}/ClipboardSync.app/Contents/Info.plist`;
 const buddy = '/usr/libexec/PlistBuddy';
 
 function run(args, options = {}) {

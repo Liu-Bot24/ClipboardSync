@@ -133,14 +133,14 @@ docker run -d \
 
 从 GitHub Release 下载客户端：
 
-- macOS：[ClipboardSync-mac-universal.dmg](https://github.com/Liu-Bot24/ClipboardSync/releases/latest/download/ClipboardSync-mac-universal.dmg)
+- macOS：[ClipboardSync-mac-arm64.dmg](https://github.com/Liu-Bot24/ClipboardSync/releases/latest/download/ClipboardSync-mac-arm64.dmg)
 - Windows：[ClipboardSync-windows-x64.zip](https://github.com/Liu-Bot24/ClipboardSync/releases/latest/download/ClipboardSync-windows-x64.zip)
 
 ### macOS
 
-当前 macOS 安装包为 Universal 版本，支持 Apple Silicon 和 Intel Mac。
+macOS 安装包只支持 Apple Silicon（M 系列芯片），体积约为同时包含 Intel 版本的 Universal 包的一半。Intel Mac 可以从源码构建：在 Mac 上执行 `CLIPBOARD_SYNC_MAC_ARCH=x64 npm run package:release`。
 
-1. 打开 `ClipboardSync-mac-universal.dmg`。
+1. 打开 `ClipboardSync-mac-arm64.dmg`。
 2. 将 `ClipboardSync.app` 拖到 `Applications`。
 3. 从 `Applications` 打开 ClipboardSync。
 

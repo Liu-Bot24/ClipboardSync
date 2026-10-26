@@ -5,9 +5,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { macDmgPath } from './mac-target.mjs';
+
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 const execFileAsync = promisify(execFile);
-const packageDmg = join(projectRoot, 'dist/ClipboardSync-mac-universal.dmg');
+const packageDmg = macDmgPath(projectRoot);
 const tmpDir = join(projectRoot, 'tmp');
 const stdoutPath = join(tmpDir, 'smoke-mac-package.out');
 const stderrPath = join(tmpDir, 'smoke-mac-package.err');

@@ -9,6 +9,7 @@ import {
   MAC_LOCAL_PROXY_HUB_URL,
   upstreamHubUrlForPackage
 } from './client-bootstrap-config.mjs';
+import { macResourcesPath } from './mac-target.mjs';
 
 const BOOTSTRAP_NAME = 'clipboard-sync.config.json';
 const PROXY_CONFIG_NAME = 'clipboard-sync.proxy.json';
@@ -71,7 +72,7 @@ if (!baseBootstrap.hubUrl) {
 
 const targets = [
   {
-    path: join(projectRoot, 'dist/ClipboardSync-darwin-universal/ClipboardSync.app/Contents/Resources', BOOTSTRAP_NAME),
+    path: join(macResourcesPath(projectRoot), BOOTSTRAP_NAME),
     config: macBootstrap
   },
   {
@@ -79,7 +80,7 @@ const targets = [
     config: windowsBootstrap
   },
   {
-    path: join(projectRoot, 'dist/ClipboardSync-darwin-universal/ClipboardSync.app/Contents/Resources', PROXY_CONFIG_NAME),
+    path: join(macResourcesPath(projectRoot), PROXY_CONFIG_NAME),
     config: macProxyConfig
   }
 ];

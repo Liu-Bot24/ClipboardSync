@@ -9,8 +9,10 @@ import { cleanPackageBuildDirs } from '../scripts/clean-package-build-dirs.mjs';
 test('cleanPackageBuildDirs removes unpacked build directories and keeps deliverables', async () => {
   const dir = await mkdtemp(join(os.tmpdir(), 'clipboard-clean-package-'));
   try {
+    await mkdir(join(dir, 'dist', 'ClipboardSync-darwin-arm64'), { recursive: true });
     await mkdir(join(dir, 'dist', 'ClipboardSync-darwin-universal'), { recursive: true });
     await mkdir(join(dir, 'dist', 'ClipboardSync-win32-x64'), { recursive: true });
+    await writeFile(join(dir, 'dist', 'ClipboardSync-mac-arm64.dmg'), '');
     await writeFile(join(dir, 'dist', 'ClipboardSync-mac-universal.dmg'), '');
     await writeFile(join(dir, 'dist', 'ClipboardSync-windows-x64.zip'), '');
     await writeFile(join(dir, 'dist', 'RELEASE_MANIFEST.json'), '{}');
@@ -19,11 +21,21 @@ test('cleanPackageBuildDirs removes unpacked build directories and keeps deliver
     await cleanPackageBuildDirs(dir);
 
     assert.deepEqual((await readdir(join(dir, 'dist'))).sort(), [
+      'ClipboardSync-mac-arm64.dmg',
       'ClipboardSync-mac-universal.dmg',
       'ClipboardSync-windows-x64.zip',
       'RELEASE_MANIFEST.json',
       'SHA256SUMS.txt'
     ]);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('cleanPackageBuildDirs tolerates a missing dist directory', async () => {
+  const dir = await mkdtemp(join(os.tmpdir(), 'clipboard-clean-package-'));
+  try {
+    await cleanPackageBuildDirs(dir);
   } finally {
     await rm(dir, { force: true, recursive: true });
   }

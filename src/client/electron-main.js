@@ -54,6 +54,9 @@ const POPUP_WIDTH = isWindows ? 460 : 420;
 const POPUP_HEIGHT = isWindows ? 760 : 680;
 const HISTORY_WIDTH = isWindows ? 720 : 520;
 const HISTORY_HEIGHT = isWindows ? 640 : 640;
+// A hidden window keeps a renderer alive (about 45 MB). Reopening soon reuses it;
+// after this idle time it is closed and rebuilt on the next open.
+const HIDDEN_WINDOW_IDLE_MS = 2 * 60_000;
 const MAC_TRAY_ICON_PATH = join(APP_ROOT, 'src/client/tray-icon.png');
 const WINDOWS_TRAY_ICON_PATH = join(APP_ROOT, 'src/client/tray-icon-win.png');
 const QA_FIXTURE_IMAGE =
@@ -63,6 +66,12 @@ const disableAutoLaunchRegistration = process.env.CLIPBOARD_SYNC_DISABLE_AUTO_LA
 const userDataDir = process.env.CLIPBOARD_SYNC_USER_DATA_DIR;
 
 disableElectronSafeStorageKeychain(app);
+
+// Windows windows are opaque, so software compositing costs nothing visible and
+// saves 8-16 MB. macOS keeps the GPU for the translucent tray panel.
+if (isWindows) {
+  app.disableHardwareAcceleration();
+}
 
 if (userDataDir) {
   app.setPath('userData', userDataDir);
@@ -547,6 +556,16 @@ function createPopupWindow({ width, height, file, windowRole = 'tray-panel' }) {
       window.hide();
     }
   });
+  let idleTimer = null;
+  window.on('hide', () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (!window.isDestroyed() && !window.isVisible()) window.destroy();
+    }, HIDDEN_WINDOW_IDLE_MS);
+    idleTimer.unref?.();
+  });
+  window.on('show', () => clearTimeout(idleTimer));
+  window.on('closed', () => clearTimeout(idleTimer));
   window.loadFile(join(APP_ROOT, file));
   return window;
 }

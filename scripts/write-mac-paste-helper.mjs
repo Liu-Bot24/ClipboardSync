@@ -4,12 +4,11 @@ import { chmod, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { clangArchArgs, macResourcesPath } from './mac-target.mjs';
+
 const execFileAsync = promisify(execFile);
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-const defaultResourcesDir = join(
-  projectRoot,
-  'dist/ClipboardSync-darwin-universal/ClipboardSync.app/Contents/Resources'
-);
+const defaultResourcesDir = macResourcesPath(projectRoot);
 
 export async function writeMacPasteHelper(resourcesDir = defaultResourcesDir) {
   const target = join(resourcesDir, 'mac-paste-helper');
@@ -24,10 +23,7 @@ export async function writeMacPasteHelper(resourcesDir = defaultResourcesDir) {
     'Cocoa',
     '-framework',
     'ApplicationServices',
-    '-arch',
-    'arm64',
-    '-arch',
-    'x86_64',
+    ...clangArchArgs(),
     join(projectRoot, 'scripts/mac-paste-helper.m'),
     '-o',
     target

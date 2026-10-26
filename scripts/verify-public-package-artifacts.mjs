@@ -15,6 +15,7 @@ import {
   validateRequiredZipEntries,
   withPackageReader
 } from './verify-package-artifacts.mjs';
+import { macDmgPath } from './mac-target.mjs';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -22,7 +23,7 @@ const publicTargets = [
   {
     name: 'mac',
     packageType: 'dmg',
-    path: join(projectRoot, 'dist/ClipboardSync-mac-universal.dmg'),
+    path: macDmgPath(projectRoot),
     asarEntry: 'ClipboardSync.app/Contents/Resources/app.asar',
     configEntry: 'ClipboardSync.app/Contents/Resources/clipboard-sync.config.json',
     requiredEntries: [

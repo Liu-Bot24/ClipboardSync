@@ -45,15 +45,26 @@ test('package:release writes public config and verifies token-free release artif
   assert.doesNotMatch(command, /inject-client-config\.mjs/);
 });
 
-test('package scripts build universal Mac and x64 Windows clients with explicit platform icon files', async () => {
+test('release packaging strips unused Chromium locales before signing and archiving', async () => {
+  const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
+  for (const key of ['package:release', 'package:configured']) {
+    const command = packageJson.scripts[key];
+    const strip = command.indexOf('strip-electron-locales.mjs darwin');
+    assert.ok(strip > command.indexOf('npm run package:win'), key);
+    assert.ok(strip < command.indexOf('sign-mac-app.mjs'), key);
+    assert.ok(command.indexOf('strip-electron-locales.mjs win32') < command.indexOf('zip -qr'), key);
+  }
+});
+
+test('package scripts build arm64 Mac by default and x64 Windows clients with explicit platform icon files', async () => {
   const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
 
   assert.match(packageJson.scripts['package:mac'], /--icon=assets\/ClipboardSync\.icns/);
   assert.match(packageJson.scripts['package:mac'], /--platform=darwin/);
-  assert.match(packageJson.scripts['package:mac'], /--arch=universal/);
+  assert.match(packageJson.scripts['package:mac'], /--arch=\$\{CLIPBOARD_SYNC_MAC_ARCH:-arm64\}/);
   assert.match(packageJson.scripts['package:mac'], /\\\.local/);
   assert.match(packageJson.scripts['package:mac'], /AGENTS\.md/);
-  assert.doesNotMatch(packageJson.scripts['package:mac'], /--arch=arm64/);
+  assert.doesNotMatch(packageJson.scripts['package:mac'], /--arch=universal/);
   assert.match(packageJson.scripts['package:win'], /--icon=assets\/ClipboardSync\.ico/);
   assert.match(packageJson.scripts['package:win'], /--arch=x64/);
   assert.match(packageJson.scripts['package:win'], /\\\.local/);

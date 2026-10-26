@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { extractFile } from '@electron/asar';
 
+import { macDmgPath } from './mac-target.mjs';
+
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 const maxPackageEntryBytes = 512 * 1024 * 1024;
 const requiredAsarEntries = [
@@ -43,7 +45,7 @@ const packageTargets = [
   {
     name: 'mac',
     packageType: 'dmg',
-    path: join(projectRoot, 'dist/ClipboardSync-mac-universal.dmg'),
+    path: macDmgPath(projectRoot),
     asarEntry: 'ClipboardSync.app/Contents/Resources/app.asar',
     configEntry: 'ClipboardSync.app/Contents/Resources/clipboard-sync.config.json',
     proxyConfigEntry: 'ClipboardSync.app/Contents/Resources/clipboard-sync.proxy.json',
@@ -129,8 +131,8 @@ function isAllowedPackageLayoutEntry(target, entry) {
 
 export function validatePackageTargetNames(targets = packageTargets) {
   const macTarget = targets.find((target) => target.name === 'mac');
-  if (!macTarget || !/ClipboardSync-mac-universal\.dmg$/.test(macTarget.path)) {
-    fail('Mac package must be a universal DMG');
+  if (!macTarget || !/ClipboardSync-mac-(arm64|x64|universal)\.dmg$/.test(macTarget.path)) {
+    fail('Mac package must be an arm64, x64 or universal DMG');
   }
 }
 

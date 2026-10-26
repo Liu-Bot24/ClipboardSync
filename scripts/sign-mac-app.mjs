@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process';
 
-const appPath = 'dist/ClipboardSync-darwin-universal/ClipboardSync.app';
+import { macBuildDirName } from './mac-target.mjs';
+
+const appPath = `dist/${macBuildDirName()}/ClipboardSync.app`;
 const entitlementsPath = 'build/ClipboardSync.entitlements';
 
 execFileSync('codesign', ['--force', '--deep', '--sign', '-', '--entitlements', entitlementsPath, appPath], { stdio: 'inherit' });

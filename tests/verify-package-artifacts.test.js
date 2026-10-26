@@ -64,14 +64,17 @@ test('package artifact validation allows only the root Finder layout file in Mac
   );
 });
 
-test('validatePackageTargetNames requires a universal Mac package target', () => {
+test('validatePackageTargetNames requires a Mac DMG for a known architecture', () => {
   assert.throws(
-    () => validatePackageTargetNames([{ name: 'mac', path: 'dist/ClipboardSync-mac-arm64.dmg' }]),
-    /Mac package must be a universal DMG/
+    () => validatePackageTargetNames([{ name: 'mac', path: 'dist/ClipboardSync-mac.zip' }]),
+    /Mac package must be an arm64, x64 or universal DMG/
   );
-  assert.doesNotThrow(() =>
-    validatePackageTargetNames([{ name: 'mac', path: 'dist/ClipboardSync-mac-universal.dmg' }])
-  );
+  assert.throws(() => validatePackageTargetNames([{ name: 'windows', path: 'dist/ClipboardSync-windows-x64.zip' }]));
+  for (const arch of ['arm64', 'x64', 'universal']) {
+    assert.doesNotThrow(() =>
+      validatePackageTargetNames([{ name: 'mac', path: `dist/ClipboardSync-mac-${arch}.dmg` }])
+    );
+  }
 });
 
 test('validatePackagedConfig rejects packages without a hub URL', () => {

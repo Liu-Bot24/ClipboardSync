@@ -4,15 +4,18 @@ import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { macArch, macDmgPath, macResourcesPath } from './mac-target.mjs';
+
 const defaultProjectRoot = fileURLToPath(new URL('..', import.meta.url));
 
 function defaultTargets(projectRoot) {
+  const arch = macArch();
   return [
     {
-      name: 'mac-universal',
-      platform: 'darwin-universal',
-      packagePath: join(projectRoot, 'dist/ClipboardSync-mac-universal.dmg'),
-      configPath: join(projectRoot, 'dist/ClipboardSync-darwin-universal/ClipboardSync.app/Contents/Resources/clipboard-sync.config.json')
+      name: `mac-${arch}`,
+      platform: `darwin-${arch}`,
+      packagePath: macDmgPath(projectRoot, arch),
+      configPath: join(macResourcesPath(projectRoot, arch), 'clipboard-sync.config.json')
     },
     {
       name: 'windows-x64',

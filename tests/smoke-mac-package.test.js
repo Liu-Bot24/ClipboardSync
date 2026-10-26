@@ -5,7 +5,7 @@ import { test } from 'node:test';
 test('smoke-mac-package launches the app from the distribution DMG', async () => {
   const script = await readFile('scripts/smoke-mac-package.mjs', 'utf8');
 
-  assert.match(script, /ClipboardSync-mac-universal\.dmg/);
+  assert.match(script, /macDmgPath\(projectRoot\)/);
   assert.match(script, /mkdtemp/);
   assert.match(script, /hdiutil/);
   assert.match(script, /Applications/);

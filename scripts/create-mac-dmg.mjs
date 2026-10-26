@@ -5,9 +5,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 
+import { macAppPath, macDmgPath } from './mac-target.mjs';
+
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-const appPath = join(projectRoot, 'dist/ClipboardSync-darwin-universal/ClipboardSync.app');
-const dmgPath = join(projectRoot, 'dist/ClipboardSync-mac-universal.dmg');
+const appPath = macAppPath(projectRoot);
+const dmgPath = macDmgPath(projectRoot);
 const volumeName = 'ClipboardSync';
 const appBundleName = 'ClipboardSync.app';
 const backgroundWidth = 620;

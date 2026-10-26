@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { createClientBootstrapConfig } from './client-bootstrap-config.mjs';
+import { macResourcesPath } from './mac-target.mjs';
 
 const BOOTSTRAP_NAME = 'clipboard-sync.config.json';
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -19,7 +20,7 @@ export async function writePublicClientConfig() {
     publicPackage: true
   };
   const targets = [
-    join(projectRoot, 'dist/ClipboardSync-darwin-universal/ClipboardSync.app/Contents/Resources', BOOTSTRAP_NAME),
+    join(macResourcesPath(projectRoot), BOOTSTRAP_NAME),
     join(projectRoot, 'dist/ClipboardSync-win32-x64', BOOTSTRAP_NAME)
   ];
 
