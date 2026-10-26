@@ -164,3 +164,19 @@ test('verify:ui keeps themed artifacts and asserts rendered UI markers', async (
   assert.match(assertScript, /real image thumbnail/);
   assert.match(assertScript, /history always-on-top control contrast/);
 });
+
+for (const platform of ['mac', 'win']) {
+  test(`Electron ${platform} package excludes native Swift sources and build outputs`, async () => {
+    const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+    const ignores = [...pkg.scripts[`package:${platform}`].matchAll(/--ignore='([^']+)'/g)]
+      .map((match) => new RegExp(match[1]));
+    for (const path of ['/mac-native', '/mac-native/Sources/ClipboardSync/App.swift',
+      '/mac-native/.build/arm64-apple-macosx/release/ClipboardSync',
+      '/mac-native/build/ClipboardSync.app/Contents/MacOS/ClipboardSync']) {
+      assert.ok(ignores.some((pattern) => pattern.test(path)), path);
+    }
+    for (const path of ['/src/client/electron-main.js', '/src/client/mac-local-proxy.js', '/src/receive-policy.js']) {
+      assert.equal(ignores.some((pattern) => pattern.test(path)), false, path);
+    }
+  });
+}

@@ -310,3 +310,10 @@ test('validateAsarEntries rejects packages missing tray menu platform logic', ()
     /mac asar is missing \/src\/client\/tray-menu-template\.js/
   );
 });
+
+test('Electron archive validation rejects native Swift build output', () => {
+  assert.throws(
+    () => validateAsarEntries('windows asar', ['/src/client/electron-main.js', '/mac-native/.build/release/ClipboardSync']),
+    /contains forbidden entries/
+  );
+});

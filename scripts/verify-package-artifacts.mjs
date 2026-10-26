@@ -105,6 +105,7 @@ const forbiddenZipPatterns = [
 ];
 
 const forbiddenAsarPatterns = [
+  /^\/mac-native(?:\/|$)/,
   /^\/tmp\//,
   /^\/\.local\//,
   /^\/docs\//,

@@ -22,6 +22,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
+      - if: runner.os == 'macOS'
+        run: swift test --package-path mac-native
       - run: node scripts/benchmark-history.mjs
       - if: runner.os != 'Linux'
         run: npm rebuild electron
